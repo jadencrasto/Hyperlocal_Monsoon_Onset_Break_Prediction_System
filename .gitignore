@@ -1,0 +1,26 @@
+# secrets
+.env
+*.key
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+# data & models (large / regenerated)
+data/raw/*
+data/processed/*
+data/app/*
+models/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/app/.gitkeep
+!models/.gitkeep
+# node
+frontend/node_modules/
+frontend/dist/
+# os/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
