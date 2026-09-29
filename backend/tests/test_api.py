@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,8 +11,9 @@ from tests.conftest import FakeProvider, rec
 
 @pytest.fixture
 def make_client(settings):
-    def _make(provider, online=True):
-        app = create_app(settings, {"fake": provider}, connectivity=lambda host: online)
+    def _make(provider, online=True, connectivity=None):
+        conn = connectivity or (lambda host: online)
+        app = create_app(settings, {"fake": provider}, connectivity=conn)
         with app.state.session_factory() as s:
             s.add(Location(name="Testville", level="district", state="Maharashtra", district="Testville",
                            latitude=18.5, longitude=73.8, coordinate_note="test"))
@@ -75,3 +76,51 @@ def test_onset_from_stored_history_and_break_risk_without_model(make_client, set
     assert all(sp["scope"] == "local_dry_spell" for sp in ds["spells"])
     assert c.get("/api/locations/1/monsoon/break-risk").status_code == 503   # no model trained
     assert c.get("/api/model/evaluation").status_code == 404
+
+
+# -- Phase 1: same-second refresh collision ------------------------------------------
+def test_rapid_double_refresh_returns_200_for_both(make_client, monkeypatch):
+    monkeypatch.setattr("app.services.weather_service.utcnow",
+                        lambda: datetime(2026, 7, 1, 12, 0, 0, 500000))
+    c = make_client(FakeProvider(forecast=[rec("2026-07-01", 3.0)]))
+    payload = {"provider": "fake"}
+    r1 = c.post("/api/locations/1/forecast/refresh", json=payload)
+    r2 = c.post("/api/locations/1/forecast/refresh", json=payload)
+    assert r1.status_code == 200 and r2.status_code == 200  # no same-second 500
+    f = c.get("/api/locations/1/forecast").json()
+    assert len(f["records"]) == 1 and f["records"][0]["precip_mm"] == 3.0  # one clean batch
+    logs = c.get("/api/sync-log").json()
+    assert [e["status"] for e in logs if e["kind"] == "forecast"] == ["ok", "ok"]
+
+
+# -- Phase 1: connectivity covers both hosts ----------------------------------------
+def _archive_unreachable(settings):
+    return lambda host: host != settings.connectivity_archive_host
+
+
+def test_mode_offline_when_archive_host_unreachable(make_client, settings):
+    c = make_client(FakeProvider(forecast=[rec("2026-07-01", 1.0)]),
+                    connectivity=_archive_unreachable(settings))
+    m = c.get("/api/mode").json()
+    assert m["effective"] == "offline" and m["internet_reachable"] is False
+    r = c.post("/api/locations/1/forecast/refresh", json={"provider": "fake"})
+    assert r.status_code == 409 and r.json()["detail"]["status"] == "skipped_offline"
+
+
+def test_explicit_online_bypasses_connectivity(make_client, settings):
+    c = make_client(FakeProvider(forecast=[rec("2026-07-01", 1.0)]),
+                    connectivity=_archive_unreachable(settings))
+    assert c.put("/api/mode", json={"preference": "online"}).json()["effective"] == "online"
+    r = c.post("/api/locations/1/forecast/refresh", json={"provider": "fake"})
+    assert r.status_code == 200 and r.json()["status"] == "ok"
+
+
+# -- Phase 2: future-date validation ------------------------------------------------
+def test_history_refresh_with_future_end_date_is_422(make_client):
+    prov = FakeProvider(history=[rec("2026-09-01", 1.0)])
+    c = make_client(prov)
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    r = c.post("/api/locations/1/history/refresh",
+               json={"provider": "fake", "start": "2026-09-01", "end": tomorrow})
+    assert r.status_code == 422
+    assert prov.calls == 0  # schema rejects before any provider call

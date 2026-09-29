@@ -78,3 +78,15 @@ def test_non_json_and_4xx_rejected():
         prov(Sess(Resp(200, bad_json=True))).fetch_forecast(1, 1, 3)
     with pytest.raises(ProviderError, match="400"):
         prov(Sess(Resp(400))).fetch_forecast(1, 1, 3)
+
+
+def test_archive_history_sends_expected_params():
+    s = Sess(Resp(200, GOOD))
+    out = prov(s).fetch_history(18.5, 73.8, date(2026, 9, 1), date(2026, 9, 5))
+    assert len(out) == 2
+    url, params, timeout = s.calls[0]
+    assert url == "http://a"  # configured archive URL, not the forecast URL
+    assert params["daily"] == "precipitation_sum"
+    assert params["start_date"] == "2026-09-01"
+    assert params["end_date"] == "2026-09-05"
+    assert params["timezone"] == "Asia/Kolkata"

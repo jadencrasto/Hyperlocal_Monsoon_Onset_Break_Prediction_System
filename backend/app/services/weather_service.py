@@ -65,7 +65,8 @@ class WeatherService:
         now = time.monotonic()
         if self._conn_cache and now - self._conn_cache[0] < 15:
             return self._conn_cache[1]
-        ok = bool(self._connectivity(self.settings.connectivity_host))
+        hosts = (self.settings.connectivity_host, self.settings.connectivity_archive_host)
+        ok = all(bool(self._connectivity(host)) for host in hosts)
         self._conn_cache = (now, ok)
         return ok
 
@@ -102,9 +103,14 @@ class WeatherService:
             return self._log(session, loc, provider_name, "forecast", started, "error", 0, str(exc))
         try:
             retrieved = utcnow().replace(microsecond=0)
-            session.add_all(ForecastRainfall(location_id=loc.id, provider=provider_name,
-                                             retrieved_at=retrieved, date=r.date, precip_mm=r.precip_mm)
-                            for r in records)
+            if records:
+                stmt = sqlite_insert(ForecastRainfall).values([
+                    dict(location_id=loc.id, provider=provider_name, retrieved_at=retrieved,
+                         date=r.date, precip_mm=r.precip_mm) for r in records])
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["location_id", "provider", "retrieved_at", "date"],
+                    set_={"precip_mm": stmt.excluded.precip_mm})
+                session.execute(stmt)
             session.flush()
         except Exception:
             session.rollback()
