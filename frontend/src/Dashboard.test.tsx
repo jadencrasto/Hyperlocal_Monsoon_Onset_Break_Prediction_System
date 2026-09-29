@@ -39,11 +39,13 @@ const basePred: Prediction = {
   },
   data_status: {
     source: "stored_reanalysis_history",
+    provider: "open_meteo",
     latest_rainfall_date: "2026-09-29",
     data_age_days: 0,
     freshness: "current",
     input_days_used: 9769,
     input_completeness: 1.0,
+    cache_status: "cached",
   },
   limitations: ["L1", "L2"],
 } as unknown as Prediction;
@@ -131,6 +133,134 @@ describe("Dashboard", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
     render(<Dashboard locationId={2} locationName="Nashik" />);
     expect(screen.getByTestId("dash-loading")).toBeInTheDocument();
+  });
+});
+
+// ---- Step 23: cache/offline indicators ----------------------------------------------
+
+describe("Step 23 cache/offline indicators", () => {
+  it("shows the cached-data indicator with provider provenance (online default)", async () => {
+    mockFetch(() => ({ body: pred() }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    const panel = await screen.findByTestId("dash-data-quality");
+    expect(screen.getByTestId("cache-indicator")).toHaveTextContent(/Cached rainfall data/i);
+    expect(screen.getByTestId("cached-indicator")).toBeInTheDocument();
+    expect(screen.queryByTestId("offline-indicator")).not.toBeInTheDocument();
+    expect(screen.getByTestId("cache-provider")).toHaveTextContent("provider: open_meteo");
+    expect(screen.getByTestId("data-provider")).toHaveTextContent("open_meteo");
+    expect(panel).toHaveTextContent(/latest observation/i);
+    // never claims live data
+    expect(panel.textContent).not.toMatch(/live/i);
+  });
+
+  it("shows the offline indicator when the API reports offline cache_status", async () => {
+    mockFetch(() => ({
+      body: pred({
+        data_status: {
+          source: "stored_reanalysis_history", provider: "open_meteo",
+          latest_rainfall_date: "2026-09-29", data_age_days: 0, freshness: "current",
+          input_days_used: 9769, input_completeness: 1.0, cache_status: "offline",
+        },
+      }),
+    }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    await screen.findByTestId("dash-data-quality");
+    expect(screen.getByTestId("cache-indicator")).toHaveTextContent(/Offline mode/i);
+    expect(screen.getByTestId("offline-indicator")).toBeInTheDocument();
+    expect(screen.queryByTestId("cached-indicator")).not.toBeInTheDocument();
+    expect(screen.getByTestId("cache-indicator")).toHaveTextContent(/using locally stored data/i);
+  });
+
+  it("pairs the cached indicator with the stale-data warning (external failure + fallback)", async () => {
+    mockFetch(() => ({
+      body: pred({
+        data_status: {
+          source: "stored_reanalysis_history", provider: "open_meteo",
+          latest_rainfall_date: "2026-09-05", data_age_days: 24, freshness: "stale",
+          input_days_used: 100, input_completeness: 1.0, cache_status: "cached",
+        },
+      }),
+    }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    await screen.findByTestId("dash-data-quality");
+    // cached fallback is stated factually, and the stale warning is still shown
+    expect(screen.getByTestId("cached-indicator")).toHaveTextContent(/Cached rainfall data/i);
+    expect(screen.getByTestId("data-warning")).toHaveTextContent(/24 days old/);
+    expect(screen.getByTestId("cache-indicator")).toHaveTextContent(/24 days old/);
+  });
+
+  it("shows the unavailable-data state when local history is insufficient", async () => {
+    mockFetch(() => ({
+      status: 422,
+      body: { detail: { error: "insufficient_or_gappy_history", hint: "gap in recent rainfall" } },
+    }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    const err = await screen.findByTestId("dash-error");
+    expect(err).toHaveTextContent(/Prediction unavailable/);
+    expect(err).toHaveTextContent(/insufficient_or_gappy_history/);
+  });  it("defaults provider and cache_status gracefully when absent (older payload)", async () => {
+    const p = pred();
+    delete (p.data_status as Record<string, unknown>).provider;
+    delete (p.data_status as Record<string, unknown>).cache_status;
+    mockFetch(() => ({ body: p }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    await screen.findByTestId("dash-data-quality");
+    expect(screen.getByTestId("cache-provider")).toHaveTextContent("provider: unknown");
+    // no cache_status -> treated as the normal online cached case
+    expect(screen.getByTestId("cached-indicator")).toBeInTheDocument();
+    expect(screen.queryByTestId("offline-indicator")).not.toBeInTheDocument();
+  });
+
+  it("shows the explicit stale-data indicator when freshness is stale", async () => {
+    mockFetch(() => ({
+      body: pred({
+        data_status: {
+          source: "stored_reanalysis_history", provider: "open_meteo",
+          latest_rainfall_date: "2026-08-15", data_age_days: 45, freshness: "stale",
+          input_days_used: 9769, input_completeness: 1.0, cache_status: "cached",
+        },
+      }),
+    }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    await screen.findByTestId("dash-data-quality");
+    // staleness refers to the DATA, and stays explicit — never downgraded to current
+    expect(screen.getByTestId("stale-indicator")).toHaveTextContent(/rainfall data is stale/i);
+    expect(screen.getByTestId("freshness")).toHaveTextContent("stale");
+    expect(screen.getByTestId("cache-indicator")).toHaveTextContent(/45 days old/);
+  });
+
+  it("shows the online-failure + cached-fallback line from last_sync_failure", async () => {
+    mockFetch(() => ({
+      body: pred({
+        last_sync_failure: {
+          kind: "history", provider: "open_meteo", category: "timeout",
+          message: "Open-Meteo timed out after 3 attempts",
+          finished_at: "2026-09-30T05:12:00+00:00",
+        },
+      }),
+    }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    await screen.findByTestId("dash-data-quality");
+    const fb = screen.getByTestId("fallback-indicator");
+    expect(fb).toHaveTextContent(/Online data unavailable \(timeout\)/i);
+    expect(fb).toHaveTextContent(/using cached rainfall data/i);
+  });
+
+  it("shows no fallback line when last_sync_failure is null (healthy)", async () => {
+    mockFetch(() => ({ body: pred({ last_sync_failure: null }) }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    await screen.findByTestId("dash-data-quality");
+    expect(screen.queryByTestId("fallback-indicator")).not.toBeInTheDocument();
+  });
+
+  it("displays provider, source and age facts in the data-quality panel", async () => {
+    mockFetch(() => ({ body: pred() }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    await screen.findByTestId("dash-data-quality");
+    expect(screen.getByTestId("data-provider")).toHaveTextContent("open_meteo");
+    expect(screen.getByTestId("cache-provider")).toHaveTextContent("provider: open_meteo");
+    expect(screen.getByTestId("cache-indicator")).toHaveTextContent(/latest observation 2026-09-29 \(0 days old\)/);
+    expect(screen.getByTestId("freshness")).toHaveTextContent("current");
   });
 });
 

@@ -13,7 +13,10 @@ from typing import Callable
 
 import requests
 
-from .base import DailyRecord, ProviderError, ProviderInfo, WeatherProvider
+from .base import (
+    CATEGORY_HTTP, CATEGORY_INVALID_DATA, CATEGORY_MALFORMED, CATEGORY_NETWORK,
+    CATEGORY_TIMEOUT, DailyRecord, ProviderError, ProviderInfo, WeatherProvider,
+)
 
 log = logging.getLogger(__name__)
 TZ = "Asia/Kolkata"
@@ -47,42 +50,60 @@ class OpenMeteoProvider(WeatherProvider):
         for attempt in range(self.max_retries + 1):
             try:
                 resp = self.session.get(url, params=params, timeout=self.timeout_s)
-            except (requests.ConnectionError, requests.Timeout) as exc:
+            except requests.Timeout as exc:
+                last = exc
+                log.warning("open_meteo timeout (attempt %d): %s", attempt + 1, exc)
+            except requests.ConnectionError as exc:
                 last = exc
                 log.warning("open_meteo network error (attempt %d): %s", attempt + 1, exc)
             else:
                 if resp.status_code == 429:
-                    raise ProviderError("Open-Meteo rate limit reached (HTTP 429); try again later")
+                    raise ProviderError(
+                        "Open-Meteo rate limit reached (HTTP 429); try again later",
+                        CATEGORY_HTTP)
                 if 500 <= resp.status_code < 600:
-                    last = ProviderError(f"HTTP {resp.status_code}")
+                    last = ProviderError(f"HTTP {resp.status_code}", CATEGORY_HTTP)
                     log.warning("open_meteo server error %s (attempt %d)", resp.status_code, attempt + 1)
                 elif resp.status_code >= 400:
-                    raise ProviderError(f"Open-Meteo rejected request: HTTP {resp.status_code}")
+                    raise ProviderError(
+                        f"Open-Meteo rejected request: HTTP {resp.status_code}", CATEGORY_HTTP)
                 else:
                     try:
                         return resp.json()
                     except ValueError as exc:
-                        raise ProviderError("Open-Meteo returned non-JSON body") from exc
+                        raise ProviderError(
+                            "Open-Meteo returned non-JSON body", CATEGORY_MALFORMED) from exc
             if attempt < self.max_retries:
                 self._sleep(0.5 * 2 ** attempt)
-        raise ProviderError(f"Open-Meteo unreachable after {self.max_retries + 1} attempts: {last}")
+        # Exhausted retries: classify what finally went wrong (timeout vs network vs HTTP).
+        if isinstance(last, requests.Timeout):
+            raise ProviderError(
+                f"Open-Meteo timed out after {self.max_retries + 1} attempts", CATEGORY_TIMEOUT)
+        if isinstance(last, requests.ConnectionError):
+            raise ProviderError(
+                f"Open-Meteo unreachable after {self.max_retries + 1} attempts: {last}",
+                CATEGORY_NETWORK)
+        raise last if isinstance(last, ProviderError) else ProviderError(str(last), CATEGORY_HTTP)
 
     @staticmethod
     def _parse_daily(payload: dict) -> list[DailyRecord]:
         daily = payload.get("daily") if isinstance(payload, dict) else None
         if not isinstance(daily, dict):
-            raise ProviderError("Malformed Open-Meteo response: missing 'daily'")
+            raise ProviderError("Malformed Open-Meteo response: missing 'daily'", CATEGORY_MALFORMED)
         times, vals = daily.get("time"), daily.get("precipitation_sum")
         if not isinstance(times, list) or not isinstance(vals, list) or len(times) != len(vals):
-            raise ProviderError("Malformed Open-Meteo response: 'time'/'precipitation_sum' mismatch")
+            raise ProviderError(
+                "Malformed Open-Meteo response: 'time'/'precipitation_sum' mismatch",
+                CATEGORY_MALFORMED)
         out = []
         for t, v in zip(times, vals):
             try:
                 d = date.fromisoformat(t)
             except (TypeError, ValueError) as exc:
-                raise ProviderError(f"Malformed date in Open-Meteo response: {t!r}") from exc
+                raise ProviderError(
+                    f"Malformed date in Open-Meteo response: {t!r}", CATEGORY_MALFORMED) from exc
             if v is not None and (not isinstance(v, (int, float)) or v < 0):
-                raise ProviderError(f"Invalid precipitation value: {v!r}")
+                raise ProviderError(f"Invalid precipitation value: {v!r}", CATEGORY_INVALID_DATA)
             out.append(DailyRecord(d, None if v is None else float(v)))
         return out
 

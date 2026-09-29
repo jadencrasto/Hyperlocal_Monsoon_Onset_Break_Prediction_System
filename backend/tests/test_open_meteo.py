@@ -51,7 +51,7 @@ def test_retries_on_5xx_then_succeeds():
 
 def test_gives_up_after_retries_on_timeout():
     s = Sess(*[requests.Timeout("t")] * 3)
-    with pytest.raises(ProviderError, match="unreachable"):
+    with pytest.raises(ProviderError, match="timed out"):
         prov(s).fetch_forecast(1, 1, 3)
     assert len(s.calls) == 3
 

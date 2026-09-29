@@ -56,12 +56,22 @@ export interface Prediction {
   uncertainty: Record<string, unknown>;
   data_status: {
     source: string;
+    provider?: string | null;          // Step 23: provenance of the most recent stored row
     latest_rainfall_date: string;
     data_age_days: number;
     freshness: "current" | "recent" | "stale";
     input_days_used: number;
     input_completeness: number;
+    cache_status?: "cached" | "offline"; // Step 23: never "live" - the prediction always reads the local store
   };
+  /** Step 25: most recent failed refresh (24h window); null when healthy/old. */
+  last_sync_failure?: {
+    kind: string;
+    provider: string;
+    category: string | null;
+    message: string | null;
+    finished_at: string;
+  } | null;
   limitations: string[];
 }
 
@@ -115,6 +125,13 @@ export class ApiError extends Error {
   }
 }
 
+/** Step 23: backend connectivity/mode state (existing Step-2 mode API, now consumed). */
+export interface ModeInfo {
+  preference: "auto" | "online" | "offline";
+  effective: "online" | "offline";
+  internet_reachable: boolean;
+}
+
 export function errorText(e: unknown): string {
   if (e instanceof ApiError) {
     const d = e.detail as { detail?: { error?: string; hint?: string } } | null;
@@ -153,6 +170,7 @@ export function pilotDistricts(tree: LocationTree): LocationNode[] {
   return out;
 }
 
+export const fetchMode = () => getJson<ModeInfo>("/api/mode");
 export const fetchTree = () => getJson<LocationTree>("/api/locations/tree");
 export const fetchPrediction = (locationId: number) =>
   getJson<Prediction>(`/api/locations/${locationId}/prediction/break-risk`);

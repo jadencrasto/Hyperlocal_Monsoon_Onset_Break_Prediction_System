@@ -15,7 +15,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import Settings
 from ..models import DailyRainfall, ForecastRainfall, Location, SyncLog
-from ..providers.base import ProviderError, WeatherProvider
+from ..providers.base import (
+    CATEGORY_INVALID_DATA, ProviderError, WeatherProvider,
+)
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ class SyncResult:
     n_records: int
     message: str | None
     finished_at: datetime
+    category: str | None = None  # Step 25 failure category (network/timeout/http/...)
 
 
 @dataclass
@@ -83,12 +86,15 @@ class WeatherService:
             raise ValueError(f"Unknown provider '{name}'. Available: {sorted(self.providers)}") from None
 
     def _log(self, session: Session, loc: Location, provider: str, kind: str, started: datetime,
-             status: str, n: int, message: str | None) -> SyncResult:
+             status: str, n: int, message: str | None, category: str | None = None) -> SyncResult:
         finished = utcnow()
+        # Step 25: the category rides in the sync-log message as a stable `[category: x]`
+        # prefix — no schema migration needed, /sync-log and /sources expose it verbatim.
+        stored = f"[category: {category}] {message}" if category and message else message
         session.add(SyncLog(location_id=loc.id, provider=provider, kind=kind, started_at=started,
-                            finished_at=finished, status=status, n_records=n, message=message))
+                            finished_at=finished, status=status, n_records=n, message=stored))
         session.commit()
-        return SyncResult(status, provider, kind, n, message, finished)
+        return SyncResult(status, provider, kind, n, message, finished, category)
 
     def refresh_forecast(self, session: Session, loc: Location, provider_name: str,
                          mode_preference: str = "auto") -> SyncResult:
@@ -100,7 +106,8 @@ class WeatherService:
             records = prov.fetch_forecast(loc.latitude, loc.longitude, self.FORECAST_DAYS)
         except ProviderError as exc:
             log.error("forecast refresh failed for %s: %s", loc.name, exc)
-            return self._log(session, loc, provider_name, "forecast", started, "error", 0, str(exc))
+            return self._log(session, loc, provider_name, "forecast", started, "error", 0,
+                             str(exc), getattr(exc, "category", None))
         try:
             retrieved = utcnow().replace(microsecond=0)
             if records:
@@ -131,7 +138,15 @@ class WeatherService:
             records = prov.fetch_history(loc.latitude, loc.longitude, start, end)
         except ProviderError as exc:
             log.error("history refresh failed for %s: %s", loc.name, exc)
-            return self._log(session, loc, provider_name, "history", started, "error", 0, str(exc))
+            return self._log(session, loc, provider_name, "history", started, "error", 0,
+                             str(exc), getattr(exc, "category", None))
+        # Step 23 write-boundary guard: invalid external values must never touch the local
+        # store (a failed refresh keeps the previous valid data untouched). No partial batch.
+        for r in records:
+            if r.precip_mm is not None and r.precip_mm < 0:
+                return self._log(session, loc, provider_name, "history", started, "error", 0,
+                                 f"Rejected invalid external data: negative precipitation on {r.date}",
+                                 CATEGORY_INVALID_DATA)
         try:
             fetched = utcnow()
             if records:

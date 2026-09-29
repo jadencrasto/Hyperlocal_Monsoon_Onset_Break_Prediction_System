@@ -43,7 +43,9 @@ def test_provider_failure_is_502_and_no_forecast_exists(make_client):
     r = c.post("/api/locations/1/forecast/refresh", json={"provider": "fake"})
     assert r.status_code == 502 and "upstream down" in r.json()["detail"]["message"]
     assert c.get("/api/locations/1/forecast").status_code == 404
-    assert c.get("/api/sources").json()["providers"][0]["last_error"]["message"] == "upstream down"
+    last_err = c.get("/api/sources").json()["providers"][0]["last_error"]
+    assert last_err["message"] == "upstream down"   # category tag stripped in the API output
+    assert last_err["category"] == "http_failure"   # FakeProvider errors default to http_failure
 
 
 def test_forecast_roundtrip_is_labelled(make_client):

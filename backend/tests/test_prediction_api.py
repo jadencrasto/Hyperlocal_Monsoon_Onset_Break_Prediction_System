@@ -198,7 +198,8 @@ def test_response_schema_versioned_and_stable(make_client, session, location, se
     b = c.get(f"/api/locations/{location.id}/prediction/break-risk").json()
     assert set(b) == {"type", "schema_version", "location", "prediction_date", "probability",
                       "risk_category", "risk_bands", "horizon_days", "event", "basis",
-                      "model", "uncertainty", "data_status", "limitations"}
+                      "model", "uncertainty", "data_status", "limitations",
+                      "last_sync_failure"}  # Step 25: null unless a recent refresh failed
     assert b["schema_version"] == "1.0" and b["type"] == "break_risk_prediction"
     assert isinstance(b["probability"], float) and 0.0 <= b["probability"] <= 1.0
     assert b["risk_bands"]["note"]  # bands carry the not-calibrated caveat inline

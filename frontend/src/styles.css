@@ -5,11 +5,17 @@
 
 * { box-sizing: border-box; }
 
+html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: #f4f6f8; }
 
-.app { max-width: 1200px; margin: 0 auto; padding: 12px; }
+/* Long API tokens (e.g. evidence_level strings) must wrap, not force page overflow. */
+.app { max-width: 1200px; margin: 0 auto; padding: 12px; overflow-wrap: break-word; }
 header h1 { font-size: 1.25rem; margin: 0; }
 header p { margin: 2px 0 10px; }
+
+/* Visible keyboard focus everywhere (Step 22 touch/a11y pass). */
+:focus-visible { outline: 2px solid #1976d2; outline-offset: 2px; }
+button:active, .loc-list button:active { filter: brightness(0.94); }
 
 .muted { color: #5b6b7a; }
 .small { font-size: 0.8rem; }
@@ -26,7 +32,7 @@ header p { margin: 2px 0 10px; }
 
 /* toolbar / tabs */
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
-.toolbar select { padding: 6px 8px; border-radius: 6px; border: 1px solid #c4cfd8; font: inherit; }
+.toolbar select { padding: 6px 8px; border-radius: 6px; border: 1px solid #c4cfd8; font: inherit; line-height: 1.4; }
 .tabs { display: flex; gap: 6px; margin-left: auto; }
 .tabs button {
   padding: 6px 14px; border: 1px solid #c4cfd8; background: #fff; border-radius: 6px;
@@ -40,28 +46,42 @@ header p { margin: 2px 0 10px; }
   grid-template-columns: 300px 1fr;
   gap: 12px;
   align-items: stretch;
+  min-width: 0; /* grid children default to min-width:auto, which can overflow */
 }
 .leaflet-container {
   height: 70vh;
+  height: 70dvh; /* dynamic viewport: no map bottom hidden behind mobile URL bars */
   min-height: 420px;
   border-radius: 8px;
   z-index: 0;
 }
 .map-side { display: flex; flex-direction: column; gap: 8px; }
+/* DetailCard's plain <dl>: stack cleanly (also on mobile) instead of browser default indent */
+.map-side dl { margin: 6px 0; font-size: 0.88rem; }
+.map-side dt { color: #5b6b7a; margin-top: 6px; }
+.map-side dd { margin: 0; }
 .map-side h2 { font-size: 1.05rem; margin: 4px 0; }
 .loc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .loc-list button {
   width: 100%; text-align: left; padding: 7px 10px; border: 1px solid #d5dde4;
   background: #fff; border-radius: 6px; cursor: pointer; font: inherit;
+  display: flex; align-items: center; gap: 6px; /* name and % stay on one row on narrow screens */
 }
 .loc-list button.sel { border-color: #1976d2; background: #e8f1fb; }
-.loc-list .pct { float: right; font-variant-numeric: tabular-nums; }
+.loc-list .pct { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+
+/* Leaflet touch usability: bigger popup close target, comfortable popup text. */
+.leaflet-popup-content { margin: 10px 12px; line-height: 1.45; }
+.leaflet-popup-close-button {
+  width: 28px !important; height: 28px !important; font-size: 20px !important;
+  padding: 4px !important;
+}
 
 /* dashboard */
 .summary-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .summary-head h3 { margin: 0; }
-.big-prob { font-size: 2rem; font-weight: 650; margin: 8px 0; }
+.big-prob { font-size: 2rem; font-weight: 650; margin: 8px 0; line-height: 1.2; }
 .big-prob .muted { font-size: 0.85rem; font-weight: 400; }
 .summary-grid { display: grid; grid-template-columns: minmax(180px, auto) 1fr; gap: 3px 14px; margin: 6px 0; font-size: 0.88rem; }
 .summary-grid dt { color: #5b6b7a; }
@@ -72,7 +92,7 @@ details.card ul { margin: 8px 0 0; padding-left: 18px; }
 
 /* advisory */
 .advisory-selectors { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-.advisory-selectors select { padding: 4px 8px; border-radius: 6px; border: 1px solid #c4cfd8; font: inherit; }
+.advisory-selectors select { padding: 4px 8px; border-radius: 6px; border: 1px solid #c4cfd8; font: inherit; line-height: 1.4; }
 .advisory-panel[lang="mr"], .advisory-panel[lang="hi"] { line-height: 1.65; font-size: 0.98rem; }
 .advisory-status { margin: 6px 0; }
 .advisory-headline { font-weight: 600; margin: 4px 0; }
@@ -104,7 +124,42 @@ details.card ul { margin: 8px 0 0; padding-left: 18px; }
 
 @media (max-width: 800px) {
   .map-wrap { grid-template-columns: 1fr; }
-  .leaflet-container { height: 55vh; min-height: 340px; order: -1; }
+  .leaflet-container {
+    height: 55vh;
+    height: 55dvh;
+    min-height: 340px;
+    order: -1;
+  }
   .summary-grid { grid-template-columns: 1fr; gap: 0; }
   .summary-grid dt { margin-top: 6px; }
+}
+
+/* ---- Step 22 mobile pass: phone-sized touch targets, stacked controls ----
+   Desktop/tablet layouts above are untouched; these rules only apply below 600 px. */
+@media (max-width: 600px) {
+  .small { font-size: 0.85rem; } /* keep fine print readable on phones */
+
+  /* toolbar: selector and tabs become full-width, easy-tap controls */
+  .toolbar { align-items: stretch; }
+  .toolbar label { width: 100%; }
+  .toolbar select { flex: 1 1 100%; width: 100%; min-height: 44px; }
+  .tabs { margin-left: 0; width: 100%; }
+  .tabs button { flex: 1; padding: 11px 14px; min-height: 44px; }
+
+  /* location list + summary buttons: comfortable tap rows */
+  .loc-list button { padding: 11px 12px; min-height: 44px; }
+  .advisory-selectors select,
+  .history-head select { min-height: 44px; }
+  .why-toggle { padding: 10px 14px; min-height: 44px; }
+  details.card summary { padding: 8px 0; }
+
+  /* advisory: language and crop selectors stack full-width */
+  .advisory-selectors { flex-direction: column; align-items: stretch; gap: 8px; }
+  .advisory-selectors label { display: flex; flex-direction: column; gap: 4px; }
+  .advisory-selectors select { width: 100%; }
+}
+
+/* very small phones: slightly smaller probability keeps it on one line */
+@media (max-width: 380px) {
+  .big-prob { font-size: 1.8rem; }
 }

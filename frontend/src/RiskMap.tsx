@@ -28,6 +28,26 @@ function FitBounds({ points }: { points: [number, number][] }) {
   return null;
 }
 
+/** Step 22: keep the map correctly sized when its container resizes without a reload —
+ * mobile browser URL-bar show/hide (dvh change), rotation, desktop window resize.
+ * Presentation-only; markers, popups and predictions are untouched. */
+function AutoResize() {
+  const map = useMap();
+  useEffect(() => {
+    const el = map.getContainer();
+    const invalidate = () => map.invalidateSize({ animate: false });
+    const ro =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(invalidate) : null;
+    ro?.observe(el);
+    window.addEventListener("orientationchange", invalidate);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("orientationchange", invalidate);
+    };
+  }, [map]);
+  return null;
+}
+
 function DetailCard({ pred, error }: { pred: Prediction | null; error: string | null }) {
   if (error) {
     return (
@@ -226,6 +246,7 @@ export default function RiskMap({
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <FitBounds points={points} />
+        <AutoResize />
         {markers.map((m) =>
           m.pred ? (
             <CircleMarker

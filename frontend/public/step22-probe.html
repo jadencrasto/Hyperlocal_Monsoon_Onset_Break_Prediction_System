@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>probe running</title>
+<style>
+  body { margin: 0; }
+  #frame { border: 0; display: block; }
+  #report { font: 12px monospace; white-space: pre-wrap; padding: 8px; }
+</style>
+</head>
+<body>
+<iframe id="frame"></iframe>
+<pre id="report">waiting…</pre>
+<script>
+  // Step 22 probe harness (test tooling only — not linked from the app).
+  // Params: ?w=<width>&h=<height>&url=<app url>&expect=comma,testids&req=leaflet
+  // Writes a PROBE_START…PROBE_END JSON report into this page's DOM for --dump-dom capture.
+  // Note: react-leaflet does not forward data-* to the map div, so the map is verified via
+  // the ".leaflet-container" class (req=leaflet), not a testid.
+  const q = new URLSearchParams(location.search);
+  const w = Number(q.get("w") || 375);
+  const h = Number(q.get("h") || 812);
+  const appUrl = q.get("url") || "/";
+  const expect = (q.get("expect") || "").split(",").filter(Boolean);
+  const needLeaflet = (q.get("req") || "").includes("leaflet");
+
+  const frame = document.getElementById("frame");
+  frame.width = w; frame.height = h;
+  frame.src = appUrl;
+
+  const errors = [];
+  const report = {
+    viewport: w + "x" + h, app_url: appUrl,
+    page_horizontal_overflow: null,
+    panel_overflow: [], missing_testids: [],
+    app_error: null, map_error: null, vite_error_overlay: null,
+    runtime_errors: errors, advisory_lang: null,
+    probability_text: null, leaflet_present: null, map_size: null,
+  };
+
+  frame.addEventListener("load", () => {
+    try {
+      const win = frame.contentWindow;
+      win.addEventListener("error", (e) => errors.push(String(e.message || e.error)));
+      win.addEventListener("unhandledrejection", (e) => errors.push("unhandledrejection: " + String(e.reason)));
+    } catch (e) { errors.push("probe setup: " + e); }
+  });
+
+  let tries = 0;
+  const timer = setInterval(() => {
+    tries++;
+    let doc;
+    try { doc = frame.contentDocument; } catch { return; }
+    if (!doc || !doc.body) return;
+
+    const missing = expect.filter((id) => !doc.querySelector('[data-testid="' + id + '"]'));
+    const leafOk = !!doc.querySelector(".leaflet-container");
+
+    // Settle when everything expected has rendered (map tiles included if required),
+    // or on a decisive error, or after ~10 s of virtual time as a hard fallback.
+    const settled =
+      (missing.length === 0 && (!needLeaflet || leafOk)) ||
+      doc.querySelector('[data-testid="app-error"]') ||
+      doc.querySelector('[data-testid="map-error"]') ||
+      tries > 50;
+    if (!settled) return;
+    clearInterval(timer);
+
+    const de = doc.documentElement;
+    report.page_horizontal_overflow =
+      de.scrollWidth > de.clientWidth + 1 || doc.body.scrollWidth > doc.body.clientWidth + 1;
+    report.missing_testids = missing;
+
+    for (const id of expect) {
+      const el = doc.querySelector('[data-testid="' + id + '"]');
+      if (el && el.scrollWidth > el.clientWidth + 1) report.panel_overflow.push(id);
+    }
+    report.app_error = !!doc.querySelector('[data-testid="app-error"]');
+    report.map_error = !!doc.querySelector('[data-testid="map-error"]');
+    report.vite_error_overlay = !!doc.querySelector("vite-error-overlay");
+    const advisory = doc.querySelector('[data-testid="advisory-panel"]');
+    report.advisory_lang = advisory ? advisory.getAttribute("lang") : null;
+    const prob = doc.querySelector('[data-testid="dash-probability"]');
+    report.probability_text = prob ? (prob.textContent || "").trim().slice(0, 24) : null;
+    const mapEl = doc.querySelector(".leaflet-container");
+    report.leaflet_present = !!mapEl;
+    if (mapEl) report.map_size = mapEl.clientWidth + "x" + mapEl.clientHeight;
+
+    const fail =
+      report.page_horizontal_overflow || report.missing_testids.length ||
+      report.panel_overflow.length || errors.length || report.vite_error_overlay ||
+      (needLeaflet && !report.leaflet_present);
+    const out = JSON.stringify(report, null, 1);
+    document.getElementById("report").textContent = "PROBE_START\n" + out + "\nPROBE_END";
+    document.title = fail ? "PROBE_FAIL" : "PROBE_OK";
+  }, 200);
+</script>
+</body>
+</html>

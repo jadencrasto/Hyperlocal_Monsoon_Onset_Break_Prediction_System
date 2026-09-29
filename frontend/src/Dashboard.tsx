@@ -98,6 +98,9 @@ export default function Dashboard({
   const ipi = u.individual_prediction_interval;
   const ds = pred.data_status;
   const color = pred.risk_category === "low" ? "#2e7d32" : pred.risk_category === "moderate" ? "#f9a825" : "#c62828";
+  // Step 25: most recent failed refresh for this location (any kind) — shown as a factual
+  // "online failed, cached data in use" line. Absent/old failures render nothing.
+  const lastFailure = pred.last_sync_failure ?? null;
 
   return (
     <div data-testid="dashboard">
@@ -176,9 +179,30 @@ export default function Dashboard({
         </dl>
       </div>
 
-      {/* ---- data quality panel ---- */}
+      {/* ---- data quality panel (with Step 23 cache/offline indicators) ---- */}
       <div className="card" data-testid="dash-data-quality">
         <h4>Data quality</h4>
+        {/* Step 23: factual data-situation line — never claims live weather; the model reads
+            the local rainfall store, so the wording stays "cached" even when online. */}
+        <p className="muted small" data-testid="cache-indicator">
+          {ds.cache_status === "offline" ? (
+            <strong data-testid="offline-indicator">Offline mode</strong>
+          ) : (
+            <strong data-testid="cached-indicator">Cached rainfall data</strong>
+          )}{" — "}
+          {ds.cache_status === "offline" ? "using locally stored data" : "from the local rainfall store"}{" · "}
+          <span data-testid="cache-provider">provider: {ds.provider ?? "unknown"}</span>{" · "}
+          latest observation {ds.latest_rainfall_date} ({ds.data_age_days} days old)
+          {ds.freshness === "stale" && (
+            <strong className="warn" data-testid="stale-indicator"> · rainfall data is stale</strong>
+          )}
+        </p>
+        {lastFailure && (
+          <p className="muted small" data-testid="fallback-indicator">
+            Online data unavailable ({lastFailure.category ?? "provider error"}) — using cached
+            rainfall data. Last refresh attempt {lastFailure.finished_at.slice(0, 10)}.
+          </p>
+        )}
         {(ds.freshness === "stale" || ds.input_completeness < 1) && (
           <p className="warn" data-testid="data-warning">
             ⚠ {ds.freshness === "stale" && `Rainfall data is ${ds.data_age_days} days old. `}
@@ -189,6 +213,8 @@ export default function Dashboard({
         <dl className="summary-grid">
           <dt>Source</dt>
           <dd>{ds.source}</dd>
+          <dt>Provider (latest row)</dt>
+          <dd data-testid="data-provider">{ds.provider ?? "unknown"}</dd>
           <dt>Latest rainfall date (observed)</dt>
           <dd>{ds.latest_rainfall_date}</dd>
           <dt>Data age</dt>

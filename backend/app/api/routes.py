@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select, text
@@ -46,7 +46,7 @@ def _iso(dt: datetime | None) -> str | None:
 
 def _sync_out(r: SyncResult) -> dict:
     return {"status": r.status, "provider": r.provider, "kind": r.kind, "n_records": r.n_records,
-            "message": r.message, "finished_at": _iso(r.finished_at)}
+            "message": r.message, "finished_at": _iso(r.finished_at), "category": r.category}
 
 
 def _raise_for_sync(r: SyncResult):
@@ -316,7 +316,7 @@ def _uncertainty_block(test: dict, rep: dict, data_age_days: int) -> dict:
 
 
 @router.get("/locations/{location_id}/prediction/break-risk")
-def prediction_break_risk(location_id: int, as_of: date | None = None,
+def prediction_break_risk(location_id: int, request: Request, as_of: date | None = None,
                           session: Session = Depends(get_session),
                           svc: WeatherService = Depends(service)):
     """Frontend-ready break-risk prediction for a pilot location.
@@ -358,6 +358,15 @@ def prediction_break_risk(location_id: int, as_of: date | None = None,
     prov = rep.get("data_provenance") or {}
     sel = prov.get("location_selection") or {}
     ds = rep.get("dataset") or {}
+    # Step 23 cache provenance: the prediction ALWAYS reads the local SQLite store, so the
+    # data is never "live". "offline" = the app is in offline mode (external providers
+    # unreachable or disabled); "cached" = same local store while online. Provider is the
+    # source of the most recent stored row (real provenance, not invented).
+    mode = svc.effective_mode(request.app.state.mode_pref)
+    last_provider = session.execute(
+        select(DailyRainfall.provider).where(DailyRainfall.location_id == location_id)
+        .order_by(DailyRainfall.date.desc(), DailyRainfall.fetched_at.desc()).limit(1)
+    ).scalar_one_or_none()
     return {
         "type": "break_risk_prediction",
         "schema_version": SCHEMA_VERSION,
@@ -371,6 +380,7 @@ def prediction_break_risk(location_id: int, as_of: date | None = None,
         "horizon_days": out["horizon_days"],
         "event": out["event"],
         "basis": out["basis"],
+        "last_sync_failure": _last_sync_failure(session, location_id),
         "model": {
             "name": out["model"],
             "class": rep.get("model_class"),
@@ -389,11 +399,13 @@ def prediction_break_risk(location_id: int, as_of: date | None = None,
         "uncertainty": _uncertainty_block(test, rep, data_age_days),
         "data_status": {
             "source": "stored_reanalysis_history",
+            "provider": last_provider,
             "latest_rainfall_date": latest.isoformat(),
             "data_age_days": data_age_days,
             "freshness": "current" if data_age_days <= 2 else ("recent" if data_age_days <= 7 else "stale"),
             "input_days_used": int(series.index.size),
             "input_completeness": round(float(series.notna().all()) if len(series) else 0.0, 3),
+            "cache_status": "offline" if mode == "offline" else "cached",
         },
         "limitations": [
             "Historical-pattern-based estimate from past rainfall only - NOT a weather forecast.",
@@ -417,6 +429,29 @@ def model_evaluation(svc: WeatherService = Depends(service)):
 
 
 # ---- sources & sync ----------------------------------------------------------------
+def _split_category(message: str | None) -> tuple[str | None, str | None]:
+    """Split the Step 25 `[category: x]` tag off a sync-log message.
+    Returns (category, clean_message)."""
+    if message and message.startswith("[category: "):
+        tag, _, rest = message.partition("]")
+        return (tag.removeprefix("[category: ") or None), rest.strip()
+    return None, message
+
+
+def _last_sync_failure(session: Session, location_id: int) -> dict | None:
+    """Most recent failed refresh for this location within the last 24h (Step 25 fallback
+    signal). Null after 24h or when everything is healthy — cached data stays usable."""
+    cutoff = utcnow() - timedelta(hours=24)
+    row = session.scalar(select(SyncLog).where(
+        SyncLog.location_id == location_id, SyncLog.status == "error",
+        SyncLog.finished_at >= cutoff).order_by(SyncLog.id.desc()).limit(1))
+    if row is None:
+        return None
+    category, message = _split_category(row.message)
+    return {"kind": row.kind, "provider": row.provider, "category": category,
+            "message": message, "finished_at": _iso(row.finished_at)}
+
+
 @router.get("/sources")
 def sources(session: Session = Depends(get_session), svc: WeatherService = Depends(service)):
     out = []
@@ -424,8 +459,10 @@ def sources(session: Session = Depends(get_session), svc: WeatherService = Depen
         last_ok = session.scalar(select(func.max(SyncLog.finished_at)).where(SyncLog.provider == name, SyncLog.status == "ok"))
         last_err = session.execute(select(SyncLog).where(SyncLog.provider == name, SyncLog.status == "error")
                                    .order_by(SyncLog.id.desc()).limit(1)).scalar_one_or_none()
+        err_category, err_message = _split_category(last_err.message if last_err else None)
         out.append({**prov.info.__dict__, "last_success": _iso(last_ok),
-                    "last_error": {"at": _iso(last_err.finished_at), "message": last_err.message} if last_err else None,
+                    "last_error": {"at": _iso(last_err.finished_at),
+                                   "message": err_message, "category": err_category} if last_err else None,
                     "cached_history_rows": session.scalar(select(func.count()).select_from(DailyRainfall).where(DailyRainfall.provider == name)),
                     "cached_forecast_rows": session.scalar(select(func.count()).select_from(ForecastRainfall).where(ForecastRainfall.provider == name))})
     return {"providers": out,
@@ -436,6 +473,10 @@ def sources(session: Session = Depends(get_session), svc: WeatherService = Depen
 @router.get("/sync-log")
 def sync_log(limit: int = Query(50, ge=1, le=500), session: Session = Depends(get_session)):
     rows = session.scalars(select(SyncLog).order_by(SyncLog.id.desc()).limit(limit)).all()
-    return [{"id": r.id, "location_id": r.location_id, "provider": r.provider, "kind": r.kind,
-             "status": r.status, "n_records": r.n_records, "message": r.message,
-             "finished_at": _iso(r.finished_at)} for r in rows]
+    out = []
+    for r in rows:
+        category, message = _split_category(r.message)
+        out.append({"id": r.id, "location_id": r.location_id, "provider": r.provider, "kind": r.kind,
+                    "status": r.status, "n_records": r.n_records, "message": message,
+                    "category": category, "finished_at": _iso(r.finished_at)})
+    return out
