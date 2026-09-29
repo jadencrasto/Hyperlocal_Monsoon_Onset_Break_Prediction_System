@@ -10,6 +10,8 @@ from ..analysis.monsoon import DrySpellConfig, OnsetConfig, detect_dry_spells, d
 from ..ml.infer import InsufficientHistory, load_artifact, load_report, predict_break_risk
 from ..models import DailyRainfall, ForecastRainfall, Location, SyncLog
 from ..schemas import ForecastRefreshRequest, HistoryRefreshRequest, ModeRequest
+from ..services import location_service as ls
+from ..services.location_service import HierarchyError
 from ..services.weather_service import SyncResult, WeatherService, utcnow
 
 router = APIRouter()
@@ -33,7 +35,8 @@ def _loc(session: Session, location_id: int) -> Location:
 
 
 def _loc_out(l: Location) -> dict:
-    return {"id": l.id, "name": l.name, "level": l.level, "state": l.state, "district": l.district,
+    return {"id": l.id, "name": l.name, "level": l.level, "parent_id": l.parent_id,
+            "state": l.state, "district": l.district,
             "latitude": l.latitude, "longitude": l.longitude, "coordinate_note": l.coordinate_note}
 
 
@@ -79,12 +82,34 @@ def set_mode(body: ModeRequest, request: Request, svc: WeatherService = Depends(
 # ---- locations ---------------------------------------------------------------------
 @router.get("/locations")
 def locations(level: str | None = None, state: str | None = None, session: Session = Depends(get_session)):
-    q = select(Location).order_by(Location.state, Location.name)
-    if level:
-        q = q.where(Location.level == level)
-    if state:
-        q = q.where(Location.state == state)
-    return [_loc_out(l) for l in session.scalars(q)]
+    try:
+        return ls.list_locations(session, level=level, state=state)
+    except HierarchyError as exc:
+        raise HTTPException(422, detail={"error": "invalid_level", "hint": str(exc)}) from exc
+
+
+@router.get("/locations/tree")
+def location_tree(session: Session = Depends(get_session)):
+    """Full State -> District -> Block -> Panchayat hierarchy for navigation (Step 16 map).
+    Each node carries n_children, has_data, and nested children where present."""
+    return ls.tree(session)
+
+
+@router.get("/locations/{location_id}/children")
+def location_children(location_id: int, session: Session = Depends(get_session)):
+    try:
+        return ls.children_of(session, location_id)
+    except HierarchyError as exc:
+        raise HTTPException(404, detail={"error": "location_not_found", "hint": str(exc)}) from exc
+
+
+@router.get("/locations/{location_id}/coverage")
+def location_coverage(location_id: int, session: Session = Depends(get_session)):
+    """Rainfall data availability for a node or its descendant districts."""
+    try:
+        return ls.rainfall_coverage(session, location_id)
+    except HierarchyError as exc:
+        raise HTTPException(404, detail={"error": "location_not_found", "hint": str(exc)}) from exc
 
 
 @router.get("/locations/{location_id}")
@@ -205,6 +230,182 @@ def break_risk(location_id: int, as_of: date | None = None, session: Session = D
     return {**out, "type": "own_model_prediction", "data_age_days": (date.today() - as_of).days,
             "training_data": rep.get("data_provenance"),
             "test_brier_skill_vs_climatology": (rep.get("test") or {}).get("brier_skill_vs_climatology")}
+
+
+# ---- Step 13/14: demo prediction endpoint ------------------------------------------
+SCHEMA_VERSION = "1.0"
+
+
+def _risk_category(p: float) -> str:
+    """Demo categorization of a probability into three operational bands.
+    NOT calibrated decision thresholds - the model is not calibrated (Step 11)."""
+    return "low" if p < 0.2 else "moderate" if p < 0.4 else "high"
+
+
+def _evidence_level(test: dict) -> str:
+    """Mechanical, honest label of what the evaluation established - no percentages."""
+    ci = test.get("brier_skill_ci") or {}
+    skill = test.get("brier_skill_vs_climatology")
+    if skill is None:
+        return "no_evaluation_available"
+    beats_climatology = isinstance(ci.get("low"), (int, float)) and ci["low"] > 0
+    model_brier = (test.get("model") or {}).get("brier")
+    dry_brier = (test.get("baseline_dry_run_conditioned") or {}).get("brier")
+    beats_heuristic = (isinstance(model_brier, (int, float)) and isinstance(dry_brier, (int, float))
+                       and model_brier < dry_brier)
+    if beats_climatology and beats_heuristic:
+        return "positive_skill_vs_climatology_and_heuristic"
+    if beats_climatology:
+        return "modest_positive_skill_vs_climatology_only"
+    return "no_skill_demonstrated"
+
+
+def _uncertainty_block(test: dict, rep: dict, data_age_days: int) -> dict:
+    """Uncertainty metadata strictly limited to what the evaluation supports.
+
+    The pipeline produces a point probability per day; it has NO per-prediction interval
+    (that would need a quantile/conformal method the current training never ran), so that
+    field is explicitly null instead of invented. What DOES exist:
+      * population-level skill + year-block bootstrap CI (uncertainty over test YEARS,
+        not per day),
+      * the calibration diagnostic (systematic over/under-prediction),
+      * per-year skill spread (how stable skill was across the 8 test years)."""
+    per_year = test.get("per_year") or []
+    bss_values = [r.get("brier_skill_vs_climatology") for r in per_year
+                  if isinstance(r.get("brier_skill_vs_climatology"), (int, float))]
+    cal = test.get("calibration") or {}
+    mean_diff = cal.get("mean_diff")
+    ci = test.get("brier_skill_ci") or {}
+    return {
+        "individual_prediction_interval": {"available": False,
+            "reason": "The current pipeline fits a single point-probability model; no quantile, "
+                      "ensemble or conformal method was trained, so no statistically justified "
+                      "per-prediction interval exists. null means 'not provided', not zero."},
+        "evaluation_skill": {
+            "brier_skill_vs_climatology": test.get("brier_skill_vs_climatology"),
+            "brier_skill_ci": ci,
+            "ci_interpretation": "95% year-block bootstrap over the 8 test years - population-level "
+                                "skill uncertainty, NOT an interval around this prediction",
+            "n_test_years": ci.get("n_years") or (len(per_year) or None),
+        },
+        "calibration": {
+            "mean_predicted": cal.get("mean_predicted"), "observed_rate": cal.get("observed_rate"),
+            "mean_diff": mean_diff,
+            "interpretation": ("model over-predicts event probability on average" if
+                               (isinstance(mean_diff, (int, float)) and mean_diff > 0) else
+                               "model under-predicts event probability on average" if
+                               (isinstance(mean_diff, (int, float)) and mean_diff < 0) else None),
+            "note": cal.get("note"),
+        },
+        "per_year_stability": {
+            "n_years": len(bss_values) or None,
+            "bss_min": min(bss_values) if bss_values else None,
+            "bss_max": max(bss_values) if bss_values else None,
+            "negative_years": sum(1 for v in bss_values if v < 0) or 0,
+            "note": "spread of per-year skill across test years; wide spread means skill is "
+                    "not year-stable" if bss_values else None,
+        },
+        "evidence_level": _evidence_level(test),
+        "data_caveats": {
+            "freshness": "current" if data_age_days <= 2 else ("recent" if data_age_days <= 7 else "stale"),
+            "data_age_days": data_age_days,
+            "note": "staleness lowers trust in the input features but is not quantifiable as "
+                    "probability without assumptions the pipeline does not make",
+        },
+    }
+
+
+@router.get("/locations/{location_id}/prediction/break-risk")
+def prediction_break_risk(location_id: int, as_of: date | None = None,
+                          session: Session = Depends(get_session),
+                          svc: WeatherService = Depends(service)):
+    """Frontend-ready break-risk prediction for a pilot location.
+
+    Historical-pattern-based estimate from locally stored rainfall only (no weather-model
+    forecast, no fabricated future data). `as_of` may not be in the future: the model has no
+    rainfall information beyond today, so a future date would silently produce a fabricated
+    prediction."""
+    location = _loc(session, location_id)
+    art = load_artifact(svc.settings.models_dir)
+    if art is None:
+        raise HTTPException(503, detail={"error": "model_unavailable",
+                            "hint": "Run scripts/train_model.py first."})
+    latest = session.scalar(select(func.max(DailyRainfall.date)).where(
+        DailyRainfall.location_id == location_id))
+    if latest is None:
+        raise HTTPException(404, detail={"error": "no_stored_history",
+                            "hint": "Run scripts/download_history.py first."})
+    if as_of is None:
+        as_of = latest
+    if as_of > date.today():
+        raise HTTPException(422, detail={"error": "future_date",
+                            "hint": "No rainfall exists beyond today; predictions for future "
+                                    "dates would be fabricated."})
+    if not (date(as_of.year, 6, 15) <= as_of <= date(as_of.year, 9, 30)):
+        raise HTTPException(422, detail={"error": "out_of_season",
+                            "hint": "The model is defined only inside the monsoon season "
+                                    "(Jun 15 - Sep 30); off-season predictions would be "
+                                    "extrapolation beyond the training domain."})
+    series = svc.history_series(session, location_id, date(1900, 1, 1), as_of)
+    try:
+        out = predict_break_risk(art, series, as_of)
+    except InsufficientHistory as exc:
+        raise HTTPException(422, detail={"error": "insufficient_or_gappy_history",
+                                          "hint": str(exc)}) from exc
+    rep = load_report(svc.settings.models_dir) or {}
+    test = rep.get("test") or {}
+    data_age_days = (date.today() - as_of).days
+    prov = rep.get("data_provenance") or {}
+    sel = prov.get("location_selection") or {}
+    ds = rep.get("dataset") or {}
+    return {
+        "type": "break_risk_prediction",
+        "schema_version": SCHEMA_VERSION,
+        "location": _loc_out(location),
+        "prediction_date": as_of.isoformat(),
+        "probability": out["probability"],
+        "risk_category": _risk_category(out["probability"]),
+        "risk_bands": {"low": "< 0.2", "moderate": "0.2 to < 0.4", "high": ">= 0.4",
+                       "note": "presentation bands for the demo UI, NOT calibrated decision "
+                               "thresholds - see uncertainty.calibration"},
+        "horizon_days": out["horizon_days"],
+        "event": out["event"],
+        "basis": out["basis"],
+        "model": {
+            "name": out["model"],
+            "class": rep.get("model_class"),
+            "trained_on_locations": sel.get("selected_location_ids"),
+            "trained_period": {"first_date": ds.get("first_date"), "last_date": ds.get("last_date"),
+                               "n_years": ds.get("n_years")},
+            "trained_through": ds.get("last_date"),
+            "test_skill": {"brier_skill_vs_climatology": test.get("brier_skill_vs_climatology"),
+                           "brier_skill_ci": test.get("brier_skill_ci")},
+            "baselines": {"model_brier": (test.get("model") or {}).get("brier"),
+                          "climatology_brier": (test.get("baseline_climatology") or {}).get("brier"),
+                          "dry_run_baseline_brier": (test.get("baseline_dry_run_conditioned") or {}).get("brier")},
+            "intended_use": rep.get("intended_use"),
+            "caveats": rep.get("caveats"),
+        },
+        "uncertainty": _uncertainty_block(test, rep, data_age_days),
+        "data_status": {
+            "source": "stored_reanalysis_history",
+            "latest_rainfall_date": latest.isoformat(),
+            "data_age_days": data_age_days,
+            "freshness": "current" if data_age_days <= 2 else ("recent" if data_age_days <= 7 else "stale"),
+            "input_days_used": int(series.index.size),
+            "input_completeness": round(float(series.notna().all()) if len(series) else 0.0, 3),
+        },
+        "limitations": [
+            "Historical-pattern-based estimate from past rainfall only - NOT a weather forecast.",
+            "Not operationally validated; test skill on reanalysis data may not transfer to gauge "
+            "observations or future seasons.",
+            "Skill is modest and does not demonstrate value over the simple dry-run heuristic "
+            "(see /api/model/evaluation).",
+            "risk_category uses fixed presentation bands, not calibrated decision thresholds.",
+            "Per-year performance varies; treat the probability as one input among several, "
+            "not an actionable forecast.",
+        ],
+    }
 
 
 @router.get("/model/evaluation")

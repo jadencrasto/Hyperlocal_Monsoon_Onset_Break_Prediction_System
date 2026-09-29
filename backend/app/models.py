@@ -13,17 +13,25 @@ class Base(DeclarativeBase):
 
 
 class Location(Base):
+    """Administrative unit: 'state' | 'district' | 'block' | 'panchayat'.
+
+    Districts carry coordinates (pilot analysis points). Higher-level grouping nodes (state,
+    and later block/panchayat when authoritative data is added) have parent_id set instead;
+    they have no coordinates and exist for hierarchy/navigation only."""
     __tablename__ = "locations"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
-    level: Mapped[str] = mapped_column(String(20))  # state | district | block | village
+    level: Mapped[str] = mapped_column(String(20))  # state | district | block | panchayat
     state: Mapped[str] = mapped_column(String(80))
     district: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    latitude: Mapped[float] = mapped_column(Float)
-    longitude: Mapped[float] = mapped_column(Float)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("locations.id", ondelete="SET NULL"), nullable=True)
     coordinate_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    __table_args__ = (UniqueConstraint("name", "level", "state", "district"),)
+    __table_args__ = (UniqueConstraint("name", "level", "state", "district"),
+                      UniqueConstraint("parent_id", "name", "level"),)
 
 
 class DailyRainfall(Base):
