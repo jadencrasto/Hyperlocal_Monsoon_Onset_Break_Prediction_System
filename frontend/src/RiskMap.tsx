@@ -59,6 +59,7 @@ function DetailCard({ pred, error }: { pred: Prediction | null; error: string | 
   }
   if (!pred) return null;
   const ds = pred.data_status;
+  const bss = pred.model.test_skill.brier_skill_vs_climatology;
   return (
     <div className="card" data-testid="detail-card">
       <h3>
@@ -92,15 +93,15 @@ function DetailCard({ pred, error }: { pred: Prediction | null; error: string | 
         <dd>{ds.latest_rainfall_date}</dd>
         <dt>Model</dt>
         <dd>
-          {pred.model.name} (trained through {pred.model.trained_through}, locations{" "}
-          {(pred.model.trained_on_locations ?? []).join(", ")})
+          Historical-pattern model (trained through {pred.model.trained_through ?? "n/a"})
         </dd>
         <dt>Evaluation</dt>
         <dd>
-          BSS vs climatology{" "}
-          {pred.model.test_skill.brier_skill_vs_climatology == null
-            ? "n/a"
-            : pred.model.test_skill.brier_skill_vs_climatology.toFixed(3)}
+          {bss == null
+            ? "No historical evaluation available"
+            : bss > 0
+              ? `Modest improvement over the climatology baseline (BSS ${bss.toFixed(3)})`
+              : "No improvement over the climatology baseline"}
         </dd>
       </dl>
       <p className="muted small">{pred.basis}</p>
@@ -192,7 +193,7 @@ export default function RiskMap({
   if (markers === null) {
     return (
       <div className="state" data-testid="map-loading">
-        Loading locations…
+        <span className="loading-line"><span className="spinner" /> Loading locations…</span>
       </div>
     );
   }
@@ -232,6 +233,12 @@ export default function RiskMap({
             </li>
           ))}
         </ul>
+        <div className="map-legend" aria-label="Risk color legend">
+          <span className="map-legend-title">Break-risk</span>
+          <span className="legend-item"><span className="legend-swatch" style={{ background: severityColor.low }} /> Low</span>
+          <span className="legend-item"><span className="legend-swatch" style={{ background: severityColor.moderate }} /> Moderate</span>
+          <span className="legend-item"><span className="legend-swatch" style={{ background: severityColor.high }} /> High</span>
+        </div>
         <DetailCard pred={selected?.pred ?? null} error={selected?.error ?? null} />
       </div>
       <MapContainer
@@ -252,18 +259,19 @@ export default function RiskMap({
             <CircleMarker
               key={m.loc.id}
               center={[m.loc.latitude!, m.loc.longitude!]}
-              radius={14}
+              radius={m.loc.id === selected?.loc.id ? 16 : 13}
               pathOptions={{
-                color: severityColor[m.pred.risk_category],
+                color: m.loc.id === selected?.loc.id ? "#0b2239" : severityColor[m.pred.risk_category],
+                weight: m.loc.id === selected?.loc.id ? 3 : 1.5,
                 fillColor: severityColor[m.pred.risk_category],
-                fillOpacity: 0.65,
+                fillOpacity: 0.72,
               }}
               eventHandlers={{ click: () => setSelected(m) }}
             >
               <Popup>
                 <strong>{m.loc.name}</strong>
                 <br />
-                {(m.pred.probability * 100).toFixed(1)}% · {m.pred.risk_category}
+                {(m.pred.probability * 100).toFixed(1)}% · {m.pred.risk_category} break-risk
                 <br />
                 as of {m.pred.prediction_date} · data {m.pred.data_status.freshness}
               </Popup>

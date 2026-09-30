@@ -4,7 +4,6 @@ import { generateAdvisoryCore, ADVISORY_DISCLAIMER } from "./advisory/engine";
 import { composeAdvisory, cropById } from "./advisory/crops";
 import {
   LOCALE_ORDER, advisoryValues, fmtDate, fmtPercent, getPack, isLocale,
-  localizedCalibration, localizedEvidence, localizedFreshness, localizedRiskCategory,
   localizedRule, localizedStatus, type LocaleCode,
 } from "./advisory/locales";
 import { localizedCrop } from "./advisory/locales/crops";
@@ -49,12 +48,11 @@ export default function AdvisoryPanel({ pred }: { pred: Prediction }) {
 
   const { core, crop, composed, v } = view;
   const style = STATUS_COLOR[core.status];
-  const riskLabel = localizedRiskCategory(locale, pred.risk_category);
   const disclaimer = locale === "en" ? ADVISORY_DISCLAIMER : pack.ui.disclaimer;
 
   return (
-    <div className="card" data-testid="advisory-panel" lang={locale}>
-      <div className="history-head">
+    <div className="card advisory-panel" data-testid="advisory-panel" lang={locale}>
+      <div className="advisory-head">
         <h4>{pack.ui.advisory_title}</h4>
         <div className="advisory-selectors">
           <label className="muted small" htmlFor="lang-select">
@@ -93,6 +91,7 @@ export default function AdvisoryPanel({ pred }: { pred: Prediction }) {
         </span>
         <span className="muted small"> · {crop.name}</span>
       </p>
+      {/* Situation: model-based headline + crop-specific guidance. */}
       <p className="advisory-headline" data-testid="advisory-headline">
         {locale === "en" ? core.headline : pack.headline[core.situation](v)}
       </p>
@@ -100,29 +99,34 @@ export default function AdvisoryPanel({ pred }: { pred: Prediction }) {
         {locale === "en" ? composed.message : `${pack.message[core.situation](v)} ${core.situation === "elevated" ? crop.elevatedBody : crop.lowerBody}`}
       </p>
 
-      <p className="muted small"><strong>{pack.ui.monitoring_title}:</strong></p>
-      <ul className="advisory-list" data-testid="advisory-monitoring">
-        {crop.monitoring.map((m, i) => <li key={i}>{m}</li>)}
-      </ul>
+      {/* What to monitor. */}
+      <div className="advisory-section">
+        <p className="muted small"><strong>{pack.ui.monitoring_title}:</strong></p>
+        <ul className="advisory-list" data-testid="advisory-monitoring">
+          {crop.monitoring.map((m, i) => <li key={i}>{m}</li>)}
+        </ul>
+      </div>
 
+      {/* Data & evidence cautions. */}
       {composed.cautions.length > 0 && (
-        <>
+        <div className="advisory-section">
           <p className="muted small"><strong>{pack.ui.cautions_title}:</strong></p>
           <ul className="advisory-list warn" data-testid="advisory-cautions">
             {locale === "en"
               ? composed.cautions.map((c, i) => <li key={i}>{c}</li>)
               : cautionsFor(locale, core, v, crop.caveat).map((c, i) => <li key={i}>{c}</li>)}
           </ul>
-        </>
+        </div>
       )}
 
-      <p className="muted small" data-testid="advisory-disclaimer">{disclaimer}</p>
+      {/* Important limitation — always visible, never removed. */}
+      <p className="advisory-note" data-testid="advisory-disclaimer">{disclaimer}</p>
 
       <button className="why-toggle" data-testid="why-toggle" onClick={() => setShowWhy((s) => !s)}>
         {showWhy ? (locale === "en" ? "Hide" : pack.ui.why_toggle) : pack.ui.why_toggle}
       </button>
       {showWhy && (
-        <div data-testid="why-panel">
+        <div className="why-panel" data-testid="why-panel">
           <ul className="advisory-list muted small">
             {core.triggers.map((t, i) => {
               const r = localizedRule(locale, t.rule, v);

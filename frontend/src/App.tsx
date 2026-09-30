@@ -17,6 +17,21 @@ function initialState(): { tab: "map" | "dashboard"; loc: number | null } {
   return { tab, loc: Number.isFinite(loc) ? loc : null };
 }
 
+/** Small inline monsoon/cloud glyph for the masthead (no icon dependency). */
+function BrandMark() {
+  return (
+    <span className="header-mark" aria-hidden="true">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path
+          d="M7 15a4.5 4.5 0 0 1-.36-8.99A5.5 5.5 0 0 1 17.29 7.6 3.75 3.75 0 0 1 16.75 15H7Z"
+          fill="rgba(255,255,255,0.92)"
+        />
+        <path d="M8.5 17.5l-1 3M12 17.5l-1 3M15.5 17.5l-1 3" stroke="#7fd0ff" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    </span>
+  );
+}
+
 export default function App() {
   const [districts, setDistricts] = useState<LocationNode[] | null>(null);
   const [treeError, setTreeError] = useState<string | null>(null);
@@ -74,44 +89,56 @@ export default function App() {
 
   return (
     <div className="app">
-      <header>
-        <h1>Hyperlocal Monsoon Break-Risk — Pilot Dashboard</h1>
-        <p className="muted small">
-          SIH26086 · demo · historical-pattern-based estimates from stored rainfall, NOT
-          weather forecasts and NOT operationally validated
-        </p>
+      <header className="app-header">
+        <div className="app-header-inner">
+          <div className="header-brand">
+            <BrandMark />
+            <div className="header-identity">
+              <h1>Hyperlocal Monsoon Intelligence</h1>
+              <p className="header-sub">
+                Probabilistic monsoon break-risk estimates at district scale, from observed
+                rainfall patterns — for planning and monitoring, not weather forecasts.
+              </p>
+            </div>
+          </div>
+        </div>
       </header>
 
       {treeError && (
-        <div className="card error" data-testid="app-error" role="alert">
+        <div className="card error" data-testid="app-error" role="alert" style={{ marginTop: 16 }}>
           <strong>Backend unavailable.</strong> <span>{treeError}</span>
           <span className="muted small">Is the API server running on port 8000?</span>
         </div>
       )}
 
       {!districts && !treeError && (
-        <div className="card" data-testid="app-loading">Loading pilot locations…</div>
+        <div className="card" data-testid="app-loading" style={{ marginTop: 16 }}>
+          <span className="loading-line"><span className="spinner" /> Loading pilot locations…</span>
+        </div>
       )}
 
       {districts && (
         <>
           <div className="toolbar">
-            <label className="muted small" htmlFor="loc-select">Location:</label>
-            <select
-              id="loc-select"
-              data-testid="location-select"
-              value={selectedId ?? ""}
-              onChange={(e) => {
-                setSelectedId(Number(e.target.value));
-                setTab("dashboard");
-              }}
-            >
-              {districts.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name} ({d.district ?? d.name}, {d.state})
-                </option>
-              ))}
-            </select>
+            <label className="toolbar-label" htmlFor="loc-select">
+              Location
+              <select
+                id="loc-select"
+                data-testid="location-select"
+                value={selectedId ?? ""}
+                onChange={(e) => {
+                  setSelectedId(Number(e.target.value));
+                  setTab("dashboard");
+                }}
+              >
+                {districts.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} ({d.district ?? d.name}, {d.state})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="spacer" />
             <div className="tabs" role="tablist">
               <button
                 role="tab"

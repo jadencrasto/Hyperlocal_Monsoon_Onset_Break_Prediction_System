@@ -149,9 +149,13 @@ export default function HistoryCharts({ locationId }: { locationId: number }) {
         under 2.5 mm within a 7-day window). This is observation history, not a prediction
         timeline — the model computes probabilities on demand and stores none.
       </p>
-      {loading && <div data-testid="history-loading">Loading history…</div>}
+      {loading && (
+        <div className="loading-line" data-testid="history-loading">
+          <span className="spinner" /> Loading history…
+        </div>
+      )}
       {!loading && n === 0 && (
-        <div className="muted" data-testid="history-empty">
+        <div className="state" data-testid="history-empty">
           No stored rainfall for this season
           {inSeason === false && coverage
             ? ` (stored coverage starts ${coverage.first_date}${coverage.last_date ? `, ends ${coverage.last_date}` : ""}).`

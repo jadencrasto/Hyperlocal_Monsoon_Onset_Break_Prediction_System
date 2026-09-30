@@ -88,7 +88,9 @@ export default function Dashboard({
   if (loading) {
     return (
       <div className="card" data-testid="dash-loading">
-        Loading prediction for {locationName}…
+        <span className="loading-line">
+          <span className="spinner" /> Loading prediction for {locationName}…
+        </span>
       </div>
     );
   }
@@ -105,17 +107,31 @@ export default function Dashboard({
   // "online failed, cached data in use" line. Absent/old failures render nothing.
   const lastFailure = pred.last_sync_failure ?? null;
 
+  // Human-readable framing of the SAME API numbers (population-level evaluation).
+  const bss = ev.brier_skill_vs_climatology;
+  const evidenceSummary =
+    bss == null
+      ? "No historical evaluation is available for this model yet."
+      : bss > 0
+        ? "On evaluated historical test years, the model performed modestly better than a simple historical-average (climatology) baseline."
+        : "On evaluated historical test years, the model did not perform better than a simple historical-average (climatology) baseline.";
+
   return (
     <div data-testid="dashboard">
-      {/* ---- main prediction summary ---- */}
-      <div className="card dash-summary" data-testid="dash-summary">
+      {/* ---- main prediction summary: the visual focal point ---- */}
+      <section className="card dash-summary" data-testid="dash-summary">
         <div className="summary-head">
-          <h3>
-            {pred.location.name}
-            <span className="muted small"> · {pred.location.state}</span>
-          </h3>
-          <span className="badge" style={{ background: color }} data-testid="risk-category">
-            {pred.risk_category}
+          <div>
+            <h3>
+              {pred.location.name}
+              <span className="muted small"> · {pred.location.state}</span>
+            </h3>
+            <p className="muted small" style={{ margin: "2px 0 0" }}>
+              Break-risk outlook for {pred.location.district ?? pred.location.name} district
+            </p>
+          </div>
+          <span className="risk-badge" style={{ background: color }} data-testid="risk-category">
+            {pred.risk_category} break-risk
           </span>
         </div>
         <DataStatusBadge pred={pred} />
@@ -129,10 +145,8 @@ export default function Dashboard({
         <dl className="summary-grid">
           <dt>Prediction date (model as-of)</dt>
           <dd data-testid="dash-date">{pred.prediction_date}</dd>
-          <dt>Model</dt>
-          <dd>
-            {pred.model.name} · trained through {pred.model.trained_through ?? "n/a"}
-          </dd>
+          <dt>Forecast horizon</dt>
+          <dd data-testid="dash-horizon">{pred.horizon_days} days</dd>
           <dt>Evidence level</dt>
           <dd data-testid="evidence-level">{u.evidence_level ?? "n/a"}</dd>
         </dl>
@@ -140,19 +154,19 @@ export default function Dashboard({
           Risk bands {pred.risk_bands?.low ? `(${pred.risk_bands.low} low, ${pred.risk_bands.moderate} moderate, ${pred.risk_bands.high} high)` : ""}{" "}
           are presentation bands only — {pred.risk_bands?.note ?? "not calibrated decision thresholds"}.
         </p>
-      </div>
+      </section>
 
-      {/* ---- evidence / uncertainty (population-level) ---- */}
-      <div className="card" data-testid="dash-uncertainty">
+      {/* ---- Evidence & uncertainty (population-level) ---- */}
+      <section className="card" data-testid="dash-uncertainty">
         <h4>Evidence &amp; uncertainty</h4>
-        <p className="muted small">
-          These are <strong>population-level evaluation results over historical test years</strong>.
-          They describe how the model performed overall — they are{" "}
+        <p className="muted small" data-testid="evidence-summary">
+          {evidenceSummary} The figures below are <strong>population-level evaluation results over
+          historical test years</strong>. They describe how the model performed overall — they are{" "}
           <strong>not an uncertainty interval around this individual prediction</strong>
           {ipi?.available ? "" : ", which is not available (see below)"}.
         </p>
         <dl className="summary-grid">
-          <dt>Evaluation BSS vs climatology</dt>
+          <dt>Historical evaluation (BSS vs climatology)</dt>
           <dd data-testid="eval-bss">{pct(ev.brier_skill_vs_climatology, 3)}</dd>
           <dt>BSS 95% CI (year-block bootstrap)</dt>
           <dd data-testid="eval-ci">
@@ -178,13 +192,13 @@ export default function Dashboard({
           <dd data-testid="ipi">
             {ipi?.available
               ? "available"
-              : `Not available — the pipeline fits a point-probability model only; no statistically justified per-prediction interval exists.`}
+              : "Not available — the model produces a single probability estimate only; no statistically justified interval for this individual prediction exists."}
           </dd>
         </dl>
-      </div>
+      </section>
 
-      {/* ---- data quality panel (with Step 23 cache/offline indicators) ---- */}
-      <div className="card" data-testid="dash-data-quality">
+      {/* ---- Data quality panel (with Step 23 cache/offline indicators) ---- */}
+      <section className="card" data-testid="dash-data-quality">
         <h4>Data quality</h4>
         {/* Step 23: factual data-situation line — never claims live weather; the model reads
             the local rainfall store, so the wording stays "cached" even when online. */}
@@ -236,7 +250,7 @@ export default function Dashboard({
           <dt>Input completeness</dt>
           <dd data-testid="completeness">{pct(ds.input_completeness, 0)}</dd>
         </dl>
-      </div>
+      </section>
 
       <details className="card muted small">
         <summary>Model caveats &amp; limitations</summary>
