@@ -163,3 +163,74 @@ details.card ul { margin: 8px 0 0; padding-left: 18px; }
 @media (max-width: 380px) {
   .big-prob { font-size: 1.8rem; }
 }
+
+/* ---- Requirement 29: minimal & professional status indicator ---- */
+.status-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 10px;
+  flex-wrap: wrap;
+  font-size: 0.84rem;
+}
+.badge-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+}
+.badge-chip.online {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 1px solid #c8e6c9;
+}
+.badge-chip.offline {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+.badge-chip.live {
+  background: #e3f2fd;
+  color: #1565c0;
+  border: 1px solid #bbdefb;
+}
+.badge-chip.cached {
+  background: #f8fafc;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+.badge-chip.warn {
+  background: #fff8e1;
+  color: #b26a00;
+  border: 1px solid #ffe082;
+}
+.badge-chip.danger {
+  background: #fdf2f2;
+  color: #8f1d1d;
+  border: 1px solid #f8b4b4;
+}
+.status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+.status-dot.online {
+  background: #2e7d32;
+}
+.status-dot.offline {
+  background: #94a3b8;
+}
+.status-text {
+  font-size: 0.82rem;
+  color: #334155;
+}
+.status-text.warn {
+  color: #b26a00;
+  font-weight: 500;
+}

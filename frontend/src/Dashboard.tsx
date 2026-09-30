@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { errorText, fetchPrediction, type Prediction } from "./api";
+import DataStatusBadge from "./DataStatusBadge";
 
 /** Step 17 prediction dashboard for one location. Pure function of `locationId`:
  * fetches the Step 14 prediction and renders the summary, evidence/uncertainty, and
@@ -37,11 +38,13 @@ const pct = (v: number | null | undefined, digits = 1) =>
   v == null ? "n/a" : `${(v * 100).toFixed(digits)}%`;
 
 function ErrorPanel({ error }: { error: string }) {
-  const unavailable = /no_stored_history|model_unavailable|insufficient_or_gappy_history|out_of_season|future_date/.test(
+  const isTooOld = /cached_data_too_old/.test(error);
+  const unavailable = /no_stored_history|model_unavailable|insufficient_or_gappy_history|out_of_season|future_date|cached_data_too_old/.test(
     error
   );
   return (
     <div className="card error" data-testid="dash-error" role="alert">
+      {isTooOld && <DataStatusBadge error={error} />}
       <strong>{unavailable ? "Prediction unavailable for this location." : "Dashboard error."}</strong>
       <span>{error}</span>
       <span className="muted small">
@@ -115,6 +118,7 @@ export default function Dashboard({
             {pred.risk_category}
           </span>
         </div>
+        <DataStatusBadge pred={pred} />
         <p className="big-prob" data-testid="dash-probability">
           {pct(pred.probability)}
           <span className="muted small">
@@ -187,10 +191,16 @@ export default function Dashboard({
         <p className="muted small" data-testid="cache-indicator">
           {ds.cache_status === "offline" ? (
             <strong data-testid="offline-indicator">Offline mode</strong>
+          ) : ds.cache_status === "live" ? (
+            <strong data-testid="live-indicator">Live rainfall data</strong>
           ) : (
             <strong data-testid="cached-indicator">Cached rainfall data</strong>
           )}{" — "}
-          {ds.cache_status === "offline" ? "using locally stored data" : "from the local rainfall store"}{" · "}
+          {ds.cache_status === "offline"
+            ? "using locally stored data"
+            : ds.cache_status === "live"
+            ? "freshly retrieved live data"
+            : "from the local rainfall store"}{" · "}
           <span data-testid="cache-provider">provider: {ds.provider ?? "unknown"}</span>{" · "}
           latest observation {ds.latest_rainfall_date} ({ds.data_age_days} days old)
           {ds.freshness === "stale" && (

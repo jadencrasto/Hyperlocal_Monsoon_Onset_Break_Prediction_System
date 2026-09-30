@@ -264,6 +264,84 @@ describe("Step 23 cache/offline indicators", () => {
   });
 });
 
+// ---- Requirements 26-29: data freshness & status indicators -------------------------
+
+describe("Requirements 26-29 Data freshness & status indicators", () => {
+  it("displays ONLINE and Live data with updated time ago", async () => {
+    mockFetch(() => ({
+      body: pred({
+        data_status: {
+          source: "stored_reanalysis_history",
+          provider: "open_meteo",
+          latest_rainfall_date: "2026-09-30",
+          data_age_days: 0,
+          freshness: "current",
+          input_days_used: 9770,
+          input_completeness: 1.0,
+          cache_status: "live",
+          data_source: "live",
+          is_live: true,
+          update_age_seconds: 240, // 4 minutes ago
+        },
+      }),
+    }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    await screen.findByTestId("status-indicator");
+
+    expect(screen.getByTestId("status-connectivity")).toHaveTextContent("ONLINE");
+    expect(screen.getByTestId("status-data-type")).toHaveTextContent("Live data");
+    expect(screen.getByTestId("status-update-time")).toHaveTextContent("Updated 4 min ago");
+    expect(screen.getByTestId("status-source")).toHaveTextContent("source: open_meteo");
+    expect(screen.getByTestId("live-indicator")).toHaveTextContent("Live rainfall data");
+  });
+
+  it("displays OFFLINE and Using cached data with update time", async () => {
+    mockFetch(() => ({
+      body: pred({
+        data_status: {
+          source: "stored_reanalysis_history",
+          provider: "open_meteo",
+          latest_rainfall_date: "2026-09-20",
+          data_age_days: 10,
+          freshness: "stale",
+          input_days_used: 9760,
+          input_completeness: 1.0,
+          cache_status: "offline",
+          data_source: "cache",
+          is_live: false,
+          update_age_seconds: 7200, // 2 hours ago
+        },
+      }),
+    }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    await screen.findByTestId("status-indicator");
+
+    expect(screen.getByTestId("status-connectivity")).toHaveTextContent("OFFLINE");
+    expect(screen.getByTestId("status-data-type")).toHaveTextContent("Using cached data");
+    expect(screen.getByTestId("status-update-time")).toHaveTextContent("Last updated 2 hr ago");
+  });
+
+  it("displays clear OFFLINE / Cached data too old / Prediction unavailable on 422 error", async () => {
+    mockFetch(() => ({
+      status: 422,
+      body: {
+        detail: {
+          error: "cached_data_too_old",
+          hint: "Cached rainfall data is too old (45 days old, max allowed 30 days). Prediction unavailable.",
+        },
+      },
+    }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    const err = await screen.findByTestId("dash-error");
+
+    expect(err).toHaveTextContent(/Prediction unavailable/);
+    expect(err).toHaveTextContent(/cached_data_too_old/);
+    expect(screen.getByTestId("status-connectivity")).toHaveTextContent("OFFLINE");
+    expect(screen.getByTestId("status-data-type")).toHaveTextContent("Cached data too old");
+    expect(screen.getByTestId("status-update-time")).toHaveTextContent("Prediction unavailable");
+  });
+});
+
 describe("HistoryCharts", () => {
   const coverage = {
     location_id: 2, level: "district", n_locations_with_data: 1,

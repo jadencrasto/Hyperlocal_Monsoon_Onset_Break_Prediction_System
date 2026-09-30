@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     open_meteo_forecast_url: str = "https://api.open-meteo.com/v1/forecast"
     open_meteo_archive_url: str = "https://archive-api.open-meteo.com/v1/archive"
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    cache_ttl_minutes: float = 15.0
+    api_cooldown_seconds: float = 60.0
+    max_cache_age_days: int = 30
 
     @property
     def database_url(self) -> str:

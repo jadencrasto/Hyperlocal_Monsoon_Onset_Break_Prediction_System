@@ -5,7 +5,7 @@ import logging
 import socket
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
 import pandas as pd
@@ -18,6 +18,7 @@ from ..models import DailyRainfall, ForecastRainfall, Location, SyncLog
 from ..providers.base import (
     CATEGORY_INVALID_DATA, ProviderError, WeatherProvider,
 )
+from .cache_manager import CacheManager
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +63,51 @@ class WeatherService:
         self.session_factory, self.providers, self.settings = session_factory, providers, settings
         self._connectivity = connectivity
         self._conn_cache: tuple[float, bool] | None = None
+        self.cache_manager = CacheManager(settings)
+
+    @property
+    def default_provider_name(self) -> str:
+        if "open_meteo" in self.providers:
+            return "open_meteo"
+        return next(iter(self.providers.keys())) if self.providers else "open_meteo"
+
+    def try_online_refresh(self, session: Session, loc: Location,
+                           provider_name: str | None = None,
+                           start: date | None = None,
+                           end: date | None = None) -> tuple[bool, SyncResult | None]:
+        """Tries to refresh observations from the provider if online, avoiding hammering failed APIs."""
+        prov_name = provider_name or self.default_provider_name
+        if self.cache_manager.is_in_failure_cooldown(session, loc.id, prov_name):
+            log.info("Location %s (%s) is in API failure cooldown; skipping live fetch.", loc.name, prov_name)
+            return False, None
+
+        if self.cache_manager.is_cache_fresh(session, loc.id, prov_name):
+            log.info("Location %s (%s) cache is within TTL; skipping redundant fetch.", loc.name, prov_name)
+            return False, None
+
+        if end is None:
+            end = date.today()
+        if start is None:
+            latest = session.scalar(select(func.max(DailyRainfall.date)).where(DailyRainfall.location_id == loc.id))
+            start = latest if latest else max(date(end.year, 6, 1), end - timedelta(days=90))
+
+        if start > end:
+            return False, None
+
+        try:
+            res = self.refresh_history(session, loc, prov_name, start, end, mode_preference="online")
+            if res.status == "ok":
+                self.cache_manager.clear_failure(loc.id, prov_name)
+                self.cache_manager.record_sync_attempt(loc.id, prov_name)
+                return (res.n_records > 0), res
+            elif res.status == "error":
+                self.cache_manager.record_failure(loc.id, prov_name)
+                return False, res
+            return False, res
+        except Exception as exc:
+            log.warning("Exception during try_online_refresh for %s: %s", loc.name, exc)
+            self.cache_manager.record_failure(loc.id, prov_name)
+            return False, None
 
     # -- mode ----------------------------------------------------------------------
     def is_online(self) -> bool:

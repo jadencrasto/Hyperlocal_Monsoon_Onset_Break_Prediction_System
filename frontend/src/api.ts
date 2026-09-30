@@ -62,7 +62,11 @@ export interface Prediction {
     freshness: "current" | "recent" | "stale";
     input_days_used: number;
     input_completeness: number;
-    cache_status?: "cached" | "offline"; // Step 23: never "live" - the prediction always reads the local store
+    cache_status?: "cached" | "offline" | "live";
+    data_source?: "live" | "cache";
+    is_live?: boolean;
+    last_updated?: string | null;
+    update_age_seconds?: number | null;
   };
   /** Step 25: most recent failed refresh (24h window); null when healthy/old. */
   last_sync_failure?: {
@@ -184,3 +188,42 @@ export const fetchDrySpells = (locationId: number, year: number, afterOnset = tr
   );
 export const fetchCoverage = (locationId: number) =>
   getJson<Coverage>(`/api/locations/${locationId}/coverage`);
+
+export function formatUpdateAge(
+  lastUpdated?: string | null,
+  updateAgeSeconds?: number | null,
+  observationDate?: string
+): string {
+  if (updateAgeSeconds != null && !isNaN(updateAgeSeconds)) {
+    const mins = Math.floor(updateAgeSeconds / 60);
+    if (mins < 1) return "Updated just now";
+    if (mins < 60) return `Updated ${mins} min ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `Last updated ${hours} hr ago`;
+    const days = Math.floor(hours / 24);
+    if (days === 1) return "Last updated yesterday";
+    return `Last updated ${days} days ago`;
+  }
+  if (lastUpdated) {
+    try {
+      const dt = new Date(lastUpdated);
+      const diffMs = Date.now() - dt.getTime();
+      if (!isNaN(diffMs) && diffMs >= 0) {
+        const mins = Math.floor(diffMs / 60000);
+        if (mins < 1) return "Updated just now";
+        if (mins < 60) return `Updated ${mins} min ago`;
+        const hours = Math.floor(mins / 60);
+        if (hours < 24) return `Last updated ${hours} hr ago`;
+        const days = Math.floor(hours / 24);
+        if (days === 1) return "Last updated yesterday";
+        return `Last updated ${days} days ago`;
+      }
+    } catch {
+      // fallback
+    }
+  }
+  if (observationDate) {
+    return `Observation ${observationDate}`;
+  }
+  return "Data up to date";
+}

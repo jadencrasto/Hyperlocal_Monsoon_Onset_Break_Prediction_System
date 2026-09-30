@@ -321,15 +321,25 @@ def prediction_break_risk(location_id: int, request: Request, as_of: date | None
                           svc: WeatherService = Depends(service)):
     """Frontend-ready break-risk prediction for a pilot location.
 
-    Historical-pattern-based estimate from locally stored rainfall only (no weather-model
-    forecast, no fabricated future data). `as_of` may not be in the future: the model has no
-    rainfall information beyond today, so a future date would silently produce a fabricated
-    prediction."""
+    Supports automatic Online -> Offline fallback (Requirement 28):
+    ONLINE: Try live data -> Success -> update local cache -> prediction.
+    Failure / Offline: Check local cache -> Offline prediction if valid.
+    """
     location = _loc(session, location_id)
     art = load_artifact(svc.settings.models_dir)
     if art is None:
         raise HTTPException(503, detail={"error": "model_unavailable",
                             "hint": "Run scripts/train_model.py first."})
+
+    mode = svc.effective_mode(request.app.state.mode_pref)
+    is_live = False
+
+    # Requirement 28: Automatic Online -> Offline fallback flow
+    if mode == "online" and as_of is None:
+        live_ok, _ = svc.try_online_refresh(session, location)
+        if live_ok:
+            is_live = True
+
     latest = session.scalar(select(func.max(DailyRainfall.date)).where(
         DailyRainfall.location_id == location_id))
     if latest is None:
@@ -346,6 +356,13 @@ def prediction_break_risk(location_id: int, request: Request, as_of: date | None
                             "hint": "The model is defined only inside the monsoon season "
                                     "(Jun 15 - Sep 30); off-season predictions would be "
                                     "extrapolation beyond the training domain."})
+
+    data_age_days = (date.today() - as_of).days
+    # Requirement 27: If cached data is too old for prediction, reject cleanly
+    if not is_live and (as_of == latest) and (data_age_days > svc.settings.max_cache_age_days):
+        raise HTTPException(422, detail={"error": "cached_data_too_old",
+                            "hint": f"Cached rainfall data is too old ({data_age_days} days old, max allowed {svc.settings.max_cache_age_days} days). Prediction unavailable."})
+
     series = svc.history_series(session, location_id, date(1900, 1, 1), as_of)
     try:
         out = predict_break_risk(art, series, as_of)
@@ -354,19 +371,20 @@ def prediction_break_risk(location_id: int, request: Request, as_of: date | None
                                           "hint": str(exc)}) from exc
     rep = load_report(svc.settings.models_dir) or {}
     test = rep.get("test") or {}
-    data_age_days = (date.today() - as_of).days
     prov = rep.get("data_provenance") or {}
     sel = prov.get("location_selection") or {}
     ds = rep.get("dataset") or {}
-    # Step 23 cache provenance: the prediction ALWAYS reads the local SQLite store, so the
-    # data is never "live". "offline" = the app is in offline mode (external providers
-    # unreachable or disabled); "cached" = same local store while online. Provider is the
-    # source of the most recent stored row (real provenance, not invented).
-    mode = svc.effective_mode(request.app.state.mode_pref)
-    last_provider = session.execute(
-        select(DailyRainfall.provider).where(DailyRainfall.location_id == location_id)
+
+    last_row = session.execute(
+        select(DailyRainfall.provider, DailyRainfall.fetched_at).where(DailyRainfall.location_id == location_id)
         .order_by(DailyRainfall.date.desc(), DailyRainfall.fetched_at.desc()).limit(1)
-    ).scalar_one_or_none()
+    ).first()
+    last_provider = last_row[0] if last_row else None
+    last_fetched_at = last_row[1] if last_row else None
+    update_age_s = (utcnow() - last_fetched_at).total_seconds() if last_fetched_at else None
+
+    cache_status = "live" if is_live else ("offline" if mode == "offline" else "cached")
+
     return {
         "type": "break_risk_prediction",
         "schema_version": SCHEMA_VERSION,
@@ -405,7 +423,11 @@ def prediction_break_risk(location_id: int, request: Request, as_of: date | None
             "freshness": "current" if data_age_days <= 2 else ("recent" if data_age_days <= 7 else "stale"),
             "input_days_used": int(series.index.size),
             "input_completeness": round(float(series.notna().all()) if len(series) else 0.0, 3),
-            "cache_status": "offline" if mode == "offline" else "cached",
+            "cache_status": cache_status,
+            "data_source": "live" if is_live else "cache",
+            "is_live": is_live,
+            "last_updated": _iso(last_fetched_at),
+            "update_age_seconds": round(update_age_s, 1) if update_age_s is not None else None,
         },
         "limitations": [
             "Historical-pattern-based estimate from past rainfall only - NOT a weather forecast.",
@@ -446,6 +468,10 @@ def _last_sync_failure(session: Session, location_id: int) -> dict | None:
         SyncLog.location_id == location_id, SyncLog.status == "error",
         SyncLog.finished_at >= cutoff).order_by(SyncLog.id.desc()).limit(1))
     if row is None:
+        return None
+    last_ok = session.scalar(select(func.max(SyncLog.finished_at)).where(
+        SyncLog.location_id == location_id, SyncLog.status == "ok", SyncLog.kind == row.kind))
+    if last_ok and last_ok >= row.finished_at:
         return None
     category, message = _split_category(row.message)
     return {"kind": row.kind, "provider": row.provider, "category": category,
