@@ -26,6 +26,7 @@ def test_health_and_locations(make_client):
     c = make_client(FakeProvider())
     h = c.get("/api/health").json()
     assert h["status"] == "ok" and h["effective_mode"] == "online" and h["model_available"] is False
+    assert h["actual_operating_state"] == "online"
     assert c.get("/api/locations").json()[0]["name"] == "Testville"
     assert c.get("/api/locations/999").status_code == 404
 
@@ -73,7 +74,7 @@ def test_onset_from_stored_history_and_break_risk_without_model(make_client, set
                                 precip_mm=v, fetched_at=now))
         s.commit()
     o = c.get("/api/locations/1/monsoon/onset?year=2021").json()
-    assert o["status"] == "detected" and o["onset_date"] == "2021-06-11" and o["type"] == "historical_analysis"
+    assert o["status"] == "detected" and o["onset_date"] == "2021-06-11" and o["type"] == "observed_onset_detection"
     ds = c.get("/api/locations/1/monsoon/dry-spells?year=2021").json()
     assert all(sp["scope"] == "local_dry_spell" for sp in ds["spells"])
     assert c.get("/api/locations/1/monsoon/break-risk").status_code == 503   # no model trained

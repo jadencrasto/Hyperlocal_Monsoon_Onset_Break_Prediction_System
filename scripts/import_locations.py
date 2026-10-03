@@ -1,5 +1,5 @@
 """Import locations from CSV (columns: name,level,state,district,latitude,longitude,coordinate_note).
-Existing rows are left untouched. Block/village rows must come from a real source (e.g. LGD / Census /
+Existing rows are left untouched. Block/panchayat rows must come from a real source (e.g. LGD / Census /
 Survey of India data you have the right to use); this project does not ship fabricated block coordinates.
 Usage: python scripts/import_locations.py data/locations_pilot.csv"""
 import csv
@@ -8,7 +8,7 @@ import sys
 from _common import session_factory
 from app.models import Location
 
-LEVELS = {"state", "district", "block", "village"}
+LEVELS = {"state", "district", "block", "panchayat"}
 
 
 def main(path: str) -> int:

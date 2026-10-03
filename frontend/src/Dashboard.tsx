@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { errorText, fetchPrediction, type Prediction } from "./api";
+import { FiAlertTriangle, FiCalendar, FiCheck } from "react-icons/fi";
+import {
+  extractPredictionError,
+  fetchPrediction,
+  MODEL_SEASON,
+  type Prediction,
+  type PredictionErrorKind,
+} from "./api";
 import DataStatusBadge from "./DataStatusBadge";
 
 /** Step 17 prediction dashboard for one location. Pure function of `locationId`:
@@ -37,16 +44,43 @@ interface Uncertainty {
 const pct = (v: number | null | undefined, digits = 1) =>
   v == null ? "n/a" : `${(v * 100).toFixed(digits)}%`;
 
-function ErrorPanel({ error }: { error: string }) {
-  const isTooOld = /cached_data_too_old/.test(error);
-  const unavailable = /no_stored_history|model_unavailable|insufficient_or_gappy_history|out_of_season|future_date|cached_data_too_old/.test(
-    error
+/** Off-season informational card — NOT an error. */
+function OffSeasonPanel() {
+  return (
+    <div className="card off-season-card" data-testid="dash-off-season" role="status">
+      <div className="off-season-header">
+        <span className="off-season-icon"><FiCalendar aria-hidden="true" /></span>
+        <div>
+          <strong>Break-risk prediction unavailable — off-season</strong>
+          <p className="muted small" style={{ margin: "4px 0 0" }}>
+            Model operating season: {MODEL_SEASON.start} – {MODEL_SEASON.end}
+          </p>
+        </div>
+      </div>
+      <p className="muted small" style={{ margin: "8px 0 0" }}>
+        Predictions are intentionally disabled outside the validated monsoon-season window.
+        Rainfall history, forecasts, and other views remain available.
+      </p>
+    </div>
   );
+}
+
+function ErrorPanel({ errorKind, errorLabel, errorHint, errorRaw }: {
+  errorKind: PredictionErrorKind;
+  errorLabel: string;
+  errorHint: string | null;
+  errorRaw: string;
+}) {
+  const isTooOld = errorKind === "cached_data_too_old";
   return (
     <div className="card error" data-testid="dash-error" role="alert">
-      {isTooOld && <DataStatusBadge error={error} />}
-      <strong>{unavailable ? "Prediction unavailable for this location." : "Dashboard error."}</strong>
-      <span>{error}</span>
+      {isTooOld && <DataStatusBadge error={errorRaw} />}
+      <strong>{errorLabel}</strong>
+      {errorHint && <span className="muted small">{errorHint}</span>}
+      <details className="muted small" style={{ marginTop: 4 }}>
+        <summary>Technical details</summary>
+        <span>{errorRaw}</span>
+      </details>
       <span className="muted small">
         Other locations remain available on the map and in the location selector.
       </span>
@@ -62,20 +96,25 @@ export default function Dashboard({
   locationName: string;
 }) {
   const [pred, setPred] = useState<Prediction | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [predError, setPredError] = useState<{
+    kind: PredictionErrorKind;
+    label: string;
+    hint: string | null;
+    raw: string;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setError(null);
+    setPredError(null);
     setPred(null);
     fetchPrediction(locationId)
       .then((p) => {
         if (!cancelled) setPred(p);
       })
       .catch((e) => {
-        if (!cancelled) setError(errorText(e));
+        if (!cancelled) setPredError(extractPredictionError(e));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -94,7 +133,11 @@ export default function Dashboard({
       </div>
     );
   }
-  if (error || !pred) return <ErrorPanel error={error ?? "unknown error"} />;
+  if (predError) {
+    if (predError.kind === "out_of_season") return <OffSeasonPanel />;
+    return <ErrorPanel errorKind={predError.kind} errorLabel={predError.label} errorHint={predError.hint} errorRaw={predError.raw} />;
+  }
+  if (!pred) return <ErrorPanel errorKind="unknown" errorLabel="Prediction unavailable." errorHint={null} errorRaw="unknown error" />;
 
   const u: Uncertainty = (pred.uncertainty ?? {}) as Uncertainty;
   const ev = u.evaluation_skill ?? {};
@@ -117,7 +160,56 @@ export default function Dashboard({
         : "On evaluated historical test years, the model did not perform better than a simple historical-average (climatology) baseline.";
 
   return (
-    <div data-testid="dashboard">
+    <div data-testid="dashboard" className="dashboard-content-wrap">
+      {/* ---- 10-Second Executive Decision Briefing ---- */}
+      <section className="card executive-briefing-card" data-testid="executive-briefing">
+        <div className="briefing-header">
+          <div className="briefing-badge-row">
+            <span className="executive-badge">Executive Monsoon Briefing</span>
+            <span className="scope-tag" data-testid="briefing-scope">Scope: District-HQ Coordinate</span>
+          </div>
+          <h3>What is happening in {pred.location.name} right now?</h3>
+        </div>
+
+        <div className="briefing-grid">
+          <div className="briefing-item">
+            <span className="item-label">1. Break / Dry-Spell Risk</span>
+            <span className={`item-value ${pred.risk_category}`}>
+              {pred.risk_category.toUpperCase()} ({pct(pred.probability)})
+            </span>
+            <span className="item-desc">
+              Chance of ≥5 consecutive dry days within next {pred.horizon_days} days
+            </span>
+          </div>
+
+          <div className="briefing-item">
+            <span className="item-label">2. Observed Monsoon Onset</span>
+            <span className="item-value">Retrospectively Detected</span>
+            <span className="item-desc">
+              Historical onset analysis available; future onset prediction is not available yet
+            </span>
+          </div>
+
+          <div className="briefing-item">
+            <span className="item-label">3. Data Freshness &amp; Source</span>
+            <span className="item-value">
+              {ds.freshness.toUpperCase()} ({ds.data_age_days}d old)
+            </span>
+            <span className="item-desc">
+              Provider: {ds.provider ?? "unknown"} ({ds.cache_status === "offline" ? "Offline cache" : "Stored reanalysis"})
+            </span>
+          </div>
+
+          <div className="briefing-item">
+            <span className="item-label">4. Weather Forecast vs ML</span>
+            <span className="item-value info">Separately Displayed</span>
+            <span className="item-desc">
+              Weather forecast informs the weather view; not used as input to break-risk model
+            </span>
+          </div>
+        </div>
+      </section>
+
       {/* ---- main prediction summary: the visual focal point ---- */}
       <section className="card dash-summary" data-testid="dash-summary">
         <div className="summary-head">
@@ -229,7 +321,8 @@ export default function Dashboard({
         )}
         {(ds.freshness === "stale" || ds.input_completeness < 1) && (
           <p className="warn" data-testid="data-warning">
-            ⚠ {ds.freshness === "stale" && `Rainfall data is ${ds.data_age_days} days old. `}
+            <FiAlertTriangle aria-hidden="true" style={{ verticalAlign: "-2px", marginRight: "4px" }} />
+            {ds.freshness === "stale" && `Rainfall data is ${ds.data_age_days} days old. `}
             {ds.input_completeness < 1 && "Recent rainfall has gaps. "}
             Treat this prediction with caution.
           </p>
@@ -263,6 +356,62 @@ export default function Dashboard({
           ))}
         </ul>
       </details>
+
+      {/* Explicit declaration of what is currently unavailable */}
+      <section className="card unavailable-capabilities-card" data-testid="unavailable-capabilities-panel">
+        <h4>System Capability Status (Truthful Scope)</h4>
+        <div className="capabilities-grid">
+          <div className="cap-item available">
+            <span className="cap-icon"><FiCheck aria-hidden="true" /></span>
+            <div>
+              <strong>Observed Break-Risk Prediction (7-Day Horizon)</strong>
+              <p className="muted small">Operational from stored historical rainfall patterns</p>
+            </div>
+          </div>
+          <div className="cap-item available">
+            <span className="cap-icon"><FiCheck aria-hidden="true" /></span>
+            <div>
+              <strong>Retrospective Observed Onset Detection</strong>
+              <p className="muted small">Operational detection from historical rainfall series</p>
+            </div>
+          </div>
+          <div className="cap-item available">
+            <span className="cap-icon"><FiCheck aria-hidden="true" /></span>
+            <div>
+              <strong>Contextual Agricultural Advisory</strong>
+              <p className="muted small">Rule-based crop advisory in English, Hindi, and Marathi</p>
+            </div>
+          </div>
+          <div className="cap-item unavailable">
+            <span className="cap-icon"><FiAlertTriangle aria-hidden="true" /></span>
+            <div>
+              <strong>Future Monsoon Onset Prediction</strong>
+              <p className="muted small">Not implemented — requires forecast-driven S2S models</p>
+            </div>
+          </div>
+          <div className="cap-item unavailable">
+            <span className="cap-icon"><FiAlertTriangle aria-hidden="true" /></span>
+            <div>
+              <strong>Block / Village-Level Hyperlocal Resolution</strong>
+              <p className="muted small">Not available — current pilot scope is district-HQ coordinates</p>
+            </div>
+          </div>
+          <div className="cap-item unavailable">
+            <span className="cap-icon"><FiAlertTriangle aria-hidden="true" /></span>
+            <div>
+              <strong>Spatial ML / Regional Feature Modeling</strong>
+              <p className="muted small">Not implemented — current model uses non-spatial features</p>
+            </div>
+          </div>
+          <div className="cap-item unavailable">
+            <span className="cap-icon"><FiAlertTriangle aria-hidden="true" /></span>
+            <div>
+              <strong>Forecast → ML Prediction Integration</strong>
+              <p className="muted small">Not implemented — forecast displayed separately as weather view</p>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

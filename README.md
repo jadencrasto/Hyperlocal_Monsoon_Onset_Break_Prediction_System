@@ -1,49 +1,88 @@
-# SIH26086 - Hyperlocal Monsoon Onset & Break Prediction (work in progress)
+# SIH26086 — Monsoon Onset & Break Prediction System
 
-**Status: backend, data layer and ML baseline pipeline are built and tested. The React dashboard is NOT built yet.
-No real-data model has been trained, so there are no accuracy figures. Do not present any prediction as validated.**
+## Current implementation
+
+| Aspect | Status |
+|---|---|
+| **Geographic resolution** | 5 Maharashtra **district-HQ approximate coordinate points** (Pune, Nashik, Kolhapur, Chhatrapati Sambhajinagar, Nagpur). Grid-cell data (~10-25 km). NOT block/village/panchayat-scale. |
+| **Onset analysis** | **Retrospective detection** from historical rainfall (type A). NOT future onset prediction. |
+| **Break-risk prediction** | ML model trained and evaluated on historical rainfall features only (BSS 0.067 vs climatology; does NOT beat the simple dry-run heuristic). No forecast integration, no spatial features. |
+| **Forecast data** | Live from Open-Meteo. Displayed as-is. **NOT fed into the prediction model.** |
+| **Spatial ML** | The model treats all locations identically (pooled). No location-specific learning. |
+| **Hierarchy** | state → district (populated) → block → panchayat (schema ready, no data). |
+| **Frontend** | React 18 + TypeScript + Vite + Leaflet. 7 tabs: Overview, Rainfall Analysis, Onset & Forecast, Advisory, Risk Map, Historical, Model & Data. |
+| **Advisory engine** | Deterministic rule engine: 7 rules, 5 Maharashtra kharif crops + generic, 3 languages (en/mr/hi). Informational only. |
+| **Online/Offline** | Auto/online/offline modes with automatic fallback, cache TTL, failure cooldown, freshness indicators. |
+| **Provider integration** | Open-Meteo (archive + forecast). Live refresh verified. Failure categories surfaced (network/timeout/http/malformed/invalid). |
 
 ## Windows setup (PowerShell)
 ```powershell
-cd monsoon-sih
+cd monsoon
 py -3.12 -m venv .venv ; .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 pip install -r requirements-dev.txt
 Copy-Item .env.example .env
-cd backend ; python -m pytest -q ; cd ..                 # expect 38 passed
+
+# Backend
+cd backend ; python -m pytest -q ; cd ..
+
+# Import pilot locations
 python scripts\import_locations.py data\locations_pilot.csv
+
+# Start backend
 cd backend ; uvicorn app.main:create_app --factory --port 8000   # http://127.0.0.1:8000/docs
+
+# Start frontend (separate terminal)
+cd frontend ; npm install ; npm run dev   # http://localhost:5173
 ```
-Manual steps (need internet, on your machine):
+
+### Data download and model training (needs internet)
 ```powershell
-# 5. verify the live provider works (one small call)
+# Verify the live provider works
 curl -X POST http://127.0.0.1:8000/api/locations/1/forecast/refresh -H "content-type: application/json" -d "{\"provider\":\"open_meteo\"}"
-# 6. pilot history (resumable; start small)
+
+# Download pilot history (resumable; start small)
 python scripts\download_history.py --start-year 2005 --end-year 2024 --location-id 1
-# 7. train + evaluate once ~15+ years are stored
+
+# Train + evaluate once ~15+ years are stored
 python scripts\train_model.py
 ```
-Afterwards `/api/model/evaluation` and `/api/locations/1/monsoon/break-risk` work fully offline.
+Afterwards `/api/model/evaluation` and `/api/locations/{id}/prediction/break-risk` work fully offline.
 
-## Manual end-to-end demo
-1. Start the API. 2. `PUT /api/mode {"preference":"online"}`, refresh the forecast, `GET forecast` shows `freshness: fresh`.
-3. `PUT /api/mode {"preference":"offline"}`: refresh returns 409, `GET forecast` still returns the cached forecast with its age.
-4. Lower `MONSOON_FORECAST_STALE_HOURS` (or wait) to see `freshness: stale`. 5. Try `monsoon/onset?year=2023`, `dry-spells?year=2023`, `break-risk`.
+## API capabilities
 
-## Implemented and tested
-Provider interface + Open-Meteo provider (mocked-HTTP tests: retries, 429, malformed payloads); SQLite storage with upsert;
-sync log; online/offline modes; freshness; onset and dry-spell detection (constructed-series tests); leakage-safe features
-(a test proves future data cannot change features or predictions); year-based split; baselines; API including failure paths.
-**38 tests passed** in the build sandbox, plus a live-server smoke test (health, locations, provider-failure path).
+See [docs/API.md](docs/API.md) for the full API reference.
 
-## NOT verified / incomplete
-- **No live Open-Meteo call has succeeded** (the sandbox blocks the host). The smoke test confirmed the failure path: HTTP 502, nothing stored, error logged.
-- Frontend (Overview, Rainfall Analysis, Map, Model Evaluation, Data Sources), charts, Leaflet, offline app shell: not started.
-- Block/village boundaries and coordinates: not included. Only 5 approximate district-HQ points. Supply real block data (e.g. LGD/Census-derived) via `scripts/import_locations.py`.
-- IMD, CHIRPS, ERA5-direct, ECMWF S2S: not integrated (docs/DATA_SOURCES.md).
-- Forecast-driven prediction (capability C): not implemented. The model uses past local rainfall only.
-- Model metrics: none yet. Reanalysis rainfall is not gauge truth; skill on it does not automatically transfer.
+| Endpoint | Type | Description |
+|---|---|---|
+| `/locations/{id}/monsoon/onset?year=` | Retrospective detection | Detects onset from stored history. Not a prediction. |
+| `/locations/{id}/monsoon/onset-prediction` | Not implemented | Reserved for future onset prediction when forecast-driven model is built. |
+| `/locations/{id}/prediction/break-risk` | ML prediction | Dry-spell break risk from historical rainfall features. Schema v1.0 with uncertainty, provenance, and limitations. |
+| `/locations/{id}/forecast` | Third-party forecast | Cached Open-Meteo forecast with freshness/staleness. NOT an ML prediction. |
+| `/locations/{id}/forecast/status` | Contract | Forecast availability and prediction integration status (currently: NOT integrated). |
+| `/locations/{id}/data-quality` | Quality | Data quality assessment: gaps, staleness, coverage. |
+| `/data-quality/coverage` | Quality | Coverage summary across all locations. |
+| `/model/evaluation` | Report | Trained model evaluation report with baselines and skill metrics. |
+| `/model/spatial-status` | Contract | Spatial awareness status (currently NOT spatially aware) and candidate approaches. |
+
+## Testing
+
+```
+Backend:  192 passed (pytest)
+Frontend:  79 passed (vitest, 11 test files)
+Production build: tsc --noEmit + vite build OK
+```
 
 ## Known limitations
-Grid-cell resolution; onset/dry-spell rules are local proxies, not IMD declarations; test-year rows are autocorrelated;
-datetimes stored as naive UTC; mode preference lives in memory and resets on restart; the connectivity check tests only a
-TCP connection (a blocked provider shows as an error on refresh, not as "offline").
+
+- Grid-cell resolution (~10-25 km, not hyperlocal); onset/dry-spell rules are local proxies, not IMD declarations.
+- Test-year rows are autocorrelated; datetimes stored as naive UTC.
+- Mode preference lives in memory and resets on restart.
+- The connectivity check tests only a TCP connection (a blocked provider shows as an error on refresh, not as "offline").
+- The model has no spatial awareness — all locations are treated identically.
+- The model does not beat the simple dry-run heuristic on the documented aggregate test Brier score.
+- Model probabilities are over-predicted on average (calibration `mean_diff` ≈ +0.061).
+- No browser-only offline operation (no service worker/PWA/IndexedDB); the frontend requires the local backend to be reachable.
+- Block/panchayat boundaries and coordinates: not included. Only 5 approximate district-HQ points. Supply real block data via `scripts/import_locations.py`.
+- IMD, CHIRPS, ERA5-direct, ECMWF S2S: not integrated (see docs/DATA_SOURCES.md).
+- Forecast-driven prediction (capability C): not implemented. The model uses past local rainfall only.

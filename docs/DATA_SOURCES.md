@@ -1,7 +1,7 @@
 # Data sources
 
-Status legend: **Integrated** = code exists and is unit-tested (live calls NOT verified from the build sandbox,
-which blocks the host). **Not integrated** = no verified programmatic access yet; nothing is faked.
+Status legend: **Integrated** = code exists, is unit-tested, and live calls have been verified.
+**Not integrated** = no verified programmatic access yet; nothing is faked.
 
 ## Open-Meteo - Integrated (`backend/app/providers/open_meteo.py`)
 | Item | Detail |
@@ -13,7 +13,7 @@ which blocks the host). **Not integrated** = no verified programmatic access yet
 | Key / registration | None. |
 | Limits / terms | Free for **non-commercial** use, CC BY 4.0 attribution; a daily request cap applies (community sources cite ~10,000/day; confirm at open-meteo.com/en/terms). Check terms before any commercial or government deployment. |
 | Village/block limits | Values are model grid cells (~10-25 km). A grid cell is not a block/village measurement, and reanalysis rainfall is not a gauge observation. History rows are labelled `kind="reanalysis"`. |
-| Verify before relying on it | Endpoint parameters were confirmed from public docs/search only; the sandbox could not reach the host, so **the first live call must be run on your machine** (README step 5). |
+| Validation | Live archive and forecast calls verified (Step 24). Failure categories classified: network, timeout, HTTP, malformed, invalid data. |
 
 ## IMD (India Meteorological Department) - Not integrated
 IMD publishes gridded rainfall, station data and warnings, but I have not verified a public, stable, unauthenticated API

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
+import { FiAlertTriangle } from "react-icons/fi";
 import {
   MapContainer, TileLayer, Marker, Popup, CircleMarker, useMap,
 } from "react-leaflet";
 import L from "leaflet";
 import {
-  ApiError, fetchPrediction, fetchTree, pilotDistricts,
-  type LocationNode, type Prediction,
+  ApiError, extractPredictionError, fetchPrediction, fetchTree, MODEL_SEASON, pilotDistricts,
+  type LocationNode, type Prediction, type PredictionErrorKind,
 } from "./api";
 
 // Presentation severity colors for the demo bands. The bands come from the API's
@@ -16,7 +17,15 @@ export const severityColor: Record<Prediction["risk_category"], string> = {
   high: "#c62828",
 };
 
-type MapMarker = { loc: LocationNode; pred: Prediction | null; error: string | null };
+/** Off-season marker color — muted gray, explicitly NOT a risk color. */
+const OFF_SEASON_COLOR = "#90a4ae";
+
+type MapMarker = {
+  loc: LocationNode;
+  pred: Prediction | null;
+  error: string | null;
+  errorKind: PredictionErrorKind | null;
+};
 
 function FitBounds({ points }: { points: [number, number][] }) {
   const map = useMap();
@@ -48,7 +57,18 @@ function AutoResize() {
   return null;
 }
 
-function DetailCard({ pred, error }: { pred: Prediction | null; error: string | null }) {
+function DetailCard({ pred, error, errorKind }: { pred: Prediction | null; error: string | null; errorKind: PredictionErrorKind | null }) {
+  if (errorKind === "out_of_season") {
+    return (
+      <div className="card off-season-card" data-testid="detail-off-season">
+        <strong>Break-risk prediction unavailable — off-season</strong>
+        <p className="muted small">
+          Model operating season: {MODEL_SEASON.start} – {MODEL_SEASON.end}.
+          Predictions are intentionally disabled outside this window.
+        </p>
+      </div>
+    );
+  }
   if (error) {
     return (
       <div className="card error" data-testid="detail-error">
@@ -80,14 +100,20 @@ function DetailCard({ pred, error }: { pred: Prediction | null; error: string | 
           {ds.freshness}{" "}
           {ds.freshness === "stale" && (
             <span className="warn" data-testid="stale-flag">
-              ⚠ rainfall data is {ds.data_age_days} days old — treat with caution
+              <FiAlertTriangle aria-hidden="true" style={{ verticalAlign: "-2px", marginRight: "4px" }} />
+              rainfall data is {ds.data_age_days} days old — treat with caution
             </span>
           )}
         </dd>
         <dt>Input completeness</dt>
         <dd data-testid="completeness">
           {(ds.input_completeness * 100).toFixed(0)}%
-          {ds.input_completeness < 1 && <span className="warn"> ⚠ gaps in recent rainfall</span>}
+          {ds.input_completeness < 1 && (
+            <span className="warn">
+              <FiAlertTriangle aria-hidden="true" style={{ verticalAlign: "-1px", marginRight: "3px" }} />
+              gaps in recent rainfall
+            </span>
+          )}
         </dd>
         <dt>Latest rainfall stored</dt>
         <dd>{ds.latest_rainfall_date}</dd>
@@ -131,6 +157,10 @@ export default function RiskMap({
     if (m && onSelect) onSelect(m.loc.id);
   };
 
+  // Derived: are ALL loaded markers in out_of_season state?
+  const allOffSeason = predictionsDone && markers != null && markers.length > 0 &&
+    markers.every((m) => m.errorKind === "out_of_season");
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -143,23 +173,23 @@ export default function RiskMap({
           setPredictionsDone(true);
           return;
         }
-        setMarkers(districts.map((loc) => ({ loc, pred: null, error: null })));
+        setMarkers(districts.map((loc) => ({ loc, pred: null, error: null, errorKind: null })));
         // Predictions load per location; one failure must not blank the map.
         await Promise.all(
           districts.map(async (loc) => {
             let pred: Prediction | null = null;
             let error: string | null = null;
+            let errorKind: PredictionErrorKind | null = null;
             try {
               pred = await fetchPrediction(loc.id);
             } catch (e) {
-              error =
-                e instanceof ApiError
-                  ? `HTTP ${e.status}: ${JSON.stringify((e.detail as any)?.detail ?? e.detail)}`
-                  : String(e);
+              const parsed = extractPredictionError(e);
+              error = parsed.label;
+              errorKind = parsed.kind;
             }
             if (cancelled) return;
             setMarkers((prev) =>
-              (prev ?? []).map((m) => (m.loc.id === loc.id ? { loc, pred, error } : m))
+              (prev ?? []).map((m) => (m.loc.id === loc.id ? { loc, pred, error, errorKind } : m))
             );
           })
         );
@@ -215,6 +245,20 @@ export default function RiskMap({
           forecast.
         </p>
         {!predictionsDone && <p className="muted" data-testid="pred-loading">Loading predictions…</p>}
+
+        {/* Map-level off-season banner */}
+        {allOffSeason && (
+          <div className="off-season-card map-off-season-banner" data-testid="map-off-season-banner">
+            <strong>Break-risk prediction is currently off-season</strong>
+            <p className="muted small">
+              Model operating season: {MODEL_SEASON.start} – {MODEL_SEASON.end}
+            </p>
+            <p className="muted small">
+              Pilot locations remain available for rainfall, historical analysis, forecast and other supported views.
+            </p>
+          </div>
+        )}
+
         <ul className="loc-list">
           {markers.map((m) => (
             <li key={m.loc.id}>
@@ -225,10 +269,18 @@ export default function RiskMap({
                 {m.pred && (
                   <span className="dot" style={{ background: severityColor[m.pred.risk_category] }} />
                 )}
+                {m.errorKind === "out_of_season" && !m.pred && (
+                  <span className="dot" style={{ background: OFF_SEASON_COLOR }} />
+                )}
                 {m.loc.name}
                 {m.pred && <span className="pct"> {(m.pred.probability * 100).toFixed(0)}%</span>}
-                {m.pred?.data_status.freshness === "stale" && <span className="warn"> ⚠</span>}
-                {m.error && <span className="muted"> (n/a)</span>}
+                {m.pred?.data_status.freshness === "stale" && (
+                  <span className="warn" title="Stale data">
+                    <FiAlertTriangle aria-hidden="true" style={{ verticalAlign: "-1px", marginLeft: "4px" }} />
+                  </span>
+                )}
+                {m.errorKind === "out_of_season" && <span className="muted"> (off-season)</span>}
+                {m.error && m.errorKind !== "out_of_season" && <span className="muted"> (n/a)</span>}
               </button>
             </li>
           ))}
@@ -238,8 +290,11 @@ export default function RiskMap({
           <span className="legend-item"><span className="legend-swatch" style={{ background: severityColor.low }} /> Low</span>
           <span className="legend-item"><span className="legend-swatch" style={{ background: severityColor.moderate }} /> Moderate</span>
           <span className="legend-item"><span className="legend-swatch" style={{ background: severityColor.high }} /> High</span>
+          {allOffSeason && (
+            <span className="legend-item"><span className="legend-swatch" style={{ background: OFF_SEASON_COLOR }} /> Off-season</span>
+          )}
         </div>
-        <DetailCard pred={selected?.pred ?? null} error={selected?.error ?? null} />
+        <DetailCard pred={selected?.pred ?? null} error={selected?.error ?? null} errorKind={selected?.errorKind ?? null} />
       </div>
       <MapContainer
         center={[19.5, 75.5]}
@@ -274,6 +329,25 @@ export default function RiskMap({
                 {(m.pred.probability * 100).toFixed(1)}% · {m.pred.risk_category} break-risk
                 <br />
                 as of {m.pred.prediction_date} · data {m.pred.data_status.freshness}
+              </Popup>
+            </CircleMarker>
+          ) : m.errorKind === "out_of_season" ? (
+            <CircleMarker
+              key={m.loc.id}
+              center={[m.loc.latitude!, m.loc.longitude!]}
+              radius={m.loc.id === selected?.loc.id ? 16 : 11}
+              pathOptions={{
+                color: m.loc.id === selected?.loc.id ? "#0b2239" : OFF_SEASON_COLOR,
+                weight: m.loc.id === selected?.loc.id ? 3 : 1.5,
+                fillColor: OFF_SEASON_COLOR,
+                fillOpacity: 0.45,
+              }}
+              eventHandlers={{ click: () => setSelected(m) }}
+            >
+              <Popup>
+                <strong>{m.loc.name}</strong>
+                <br />
+                Off-season — predictions available {MODEL_SEASON.start} – {MODEL_SEASON.end}
               </Popup>
             </CircleMarker>
           ) : (

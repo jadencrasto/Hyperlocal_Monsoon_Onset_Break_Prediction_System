@@ -22,7 +22,9 @@ def create_app(settings: Settings | None = None, providers: dict | None = None, 
     ensure_schema(engine)
     factory = make_session_factory(engine)
     kwargs = {"connectivity": connectivity} if connectivity else {}
-    app = FastAPI(title="Hyperlocal Monsoon Onset & Break API (SIH26086)", version=VERSION)
+    app = FastAPI(title="Monsoon Onset & Break Prediction API (SIH26086)", version=VERSION,
+                  description="District-level pilot system. Target: hyperlocal block/village scale. "
+                              "Current data: 5 Maharashtra district-HQ coordinate points.")
     app.state.settings, app.state.session_factory = settings, factory
     app.state.service = WeatherService(factory, providers or build_providers(settings), settings, **kwargs)
     app.state.mode_pref = "auto"

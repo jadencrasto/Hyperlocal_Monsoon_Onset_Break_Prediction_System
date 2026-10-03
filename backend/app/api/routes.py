@@ -8,14 +8,16 @@ from sqlalchemy.orm import Session
 
 from ..analysis.monsoon import DrySpellConfig, OnsetConfig, detect_dry_spells, detect_onset
 from ..ml.infer import InsufficientHistory, load_artifact, load_report, predict_break_risk
+from ..ml.spatial import spatial_awareness_status
 from ..models import DailyRainfall, ForecastRainfall, Location, SyncLog
 from ..schemas import ForecastRefreshRequest, HistoryRefreshRequest, ModeRequest
 from ..services import location_service as ls
+from ..services.data_quality import coverage_summary, validate_forecast_freshness, validate_location_data
 from ..services.location_service import HierarchyError
 from ..services.weather_service import SyncResult, WeatherService, utcnow
 
 router = APIRouter()
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 
 def get_session(request: Request):
@@ -61,9 +63,26 @@ def _raise_for_sync(r: SyncResult):
 def health(request: Request, session: Session = Depends(get_session), svc: WeatherService = Depends(service)):
     session.execute(text("select 1"))
     pref = request.app.state.mode_pref
+    effective = svc.effective_mode(pref)
+    internet = svc.is_online()
+    # Actual operating state: not just configured mode but real data/provider status
+    if effective == "online" and not internet:
+        actual_state = "degraded_offline"
+    else:
+        actual_state = effective
+    spatial = spatial_awareness_status()
     return {"status": "ok", "version": VERSION, "database": "ok", "mode_preference": pref,
-            "effective_mode": svc.effective_mode(pref),
+            "effective_mode": effective,
+            "actual_operating_state": actual_state,
+            "internet_reachable": internet,
             "model_available": load_artifact(svc.settings.models_dir) is not None,
+            "spatial_awareness": spatial["is_spatially_aware"],
+            "geographic_scope": {
+                "current": "district_hq_coordinate_points",
+                "target": "block_village_target_coordinates",
+                "note": "Current predictions use district-HQ approximate coordinates. "
+                        "Block/village-level data is not yet available."
+            },
             "time_utc": _iso(utcnow())}
 
 
@@ -184,12 +203,25 @@ def _year_series(svc, session, location_id, year, tail_days=60):
 @router.get("/locations/{location_id}/monsoon/onset")
 def onset(location_id: int, year: int = Query(ge=1940, le=2100), session: Session = Depends(get_session),
           svc: WeatherService = Depends(service)):
+    """Retrospective monsoon onset DETECTION from stored historical rainfall.
+
+    This is observed/historical onset detection (type A), NOT future onset prediction.
+    It analyses past rainfall data to identify when monsoon onset occurred in a given year.
+    For future onset prediction (type B), see /monsoon/onset-prediction (not yet implemented).
+    """
     _loc(session, location_id)
     cfg = OnsetConfig()
     res = detect_onset(_year_series(svc, session, location_id, year), year, cfg)
-    return {"location_id": location_id, "year": year, "type": "historical_analysis", "status": res.status,
+    return {"location_id": location_id, "year": year,
+            "type": "observed_onset_detection",
+            "analysis_kind": "retrospective",
+            "status": res.status,
+            "observed_onset": res.onset_date.isoformat() if res.onset_date else None,
+            # Backward compat: keep onset_date for existing consumers
             "onset_date": res.onset_date.isoformat() if res.onset_date else None,
-            "detail": res.detail, "config": cfg.__dict__}
+            "detail": res.detail, "config": cfg.__dict__,
+            "note": "This is retrospective onset detection from historical rainfall, "
+                    "not a future onset prediction. See /monsoon/onset-prediction."}
 
 
 @router.get("/locations/{location_id}/monsoon/dry-spells")
@@ -448,6 +480,125 @@ def model_evaluation(svc: WeatherService = Depends(service)):
     if rep is None:
         raise HTTPException(404, "No evaluation report. Train a model with scripts/train_model.py.")
     return rep
+
+
+# ---- onset prediction (not implemented) -------------------------------------------
+@router.get("/locations/{location_id}/monsoon/onset-prediction")
+def onset_prediction(location_id: int, session: Session = Depends(get_session)):
+    """Future monsoon onset prediction — NOT YET IMPLEMENTED.
+
+    This endpoint is reserved for genuine future onset prediction (type B).
+    The existing /monsoon/onset endpoint provides retrospective onset detection (type A)
+    from historical data. This endpoint will provide forward-looking predictions when
+    the required forecast-driven model is implemented.
+    """
+    _loc(session, location_id)
+    return {
+        "location_id": location_id,
+        "type": "onset_prediction",
+        "prediction_status": "not_implemented",
+        "predicted_onset": None,
+        "confidence": None,
+        "observed_onset": None,
+        "note": "Future onset prediction is not yet implemented. "
+                "Use /monsoon/onset?year=YYYY for retrospective onset detection "
+                "from historical rainfall data.",
+        "requirements": [
+            "Forecast-driven model (e.g. ECMWF S2S reforecast archive)",
+            "Calibrated probability estimates for onset timing",
+            "Validation against historical observed onsets",
+        ],
+    }
+
+
+# ---- forecast contract -------------------------------------------------------------
+@router.get("/locations/{location_id}/forecast/status")
+def forecast_status(location_id: int, session: Session = Depends(get_session),
+                    svc: WeatherService = Depends(service)):
+    """Forecast data status and readiness for prediction integration.
+
+    Reports what forecast data is available, its freshness, and whether it
+    could participate in prediction (currently: forecast is NOT used by the
+    ML model, which uses only historical rainfall).
+    """
+    _loc(session, location_id)
+    freshness = validate_forecast_freshness(session, location_id, svc.settings.forecast_stale_hours)
+    snap = svc.latest_forecast(session, location_id)
+
+    forecast_records = []
+    if snap:
+        forecast_records = [{"date": d.isoformat(), "precip_mm": v} for d, v in snap.records]
+
+    return {
+        "location_id": location_id,
+        "forecast_available": snap is not None,
+        "freshness": freshness,
+        "n_forecast_days": len(forecast_records) if snap else 0,
+        "prediction_integration": {
+            "integrated": False,
+            "reason": "The current ML model uses only historical rainfall features. "
+                      "Third-party forecast data is displayed separately but does NOT "
+                      "feed into the break-risk prediction model.",
+            "required_for_integration": [
+                "Forecast-based features in the ML pipeline",
+                "Reforecast archive for training (e.g. ECMWF S2S)",
+                "Validation showing forecast features improve skill",
+            ],
+        },
+        "provider_info": {
+            "name": snap.provider if snap else None,
+            "retrieved_at": _iso(snap.retrieved_at) if snap else None,
+            "age_hours": round(snap.age_hours, 2) if snap else None,
+            "stale": snap.stale if snap else None,
+        },
+        "offline_usable": snap is not None,
+        "offline_note": "Cached forecast data can be served offline but will become stale. "
+                        "Stale forecasts are labelled but not suppressed.",
+    }
+
+
+# ---- data quality ------------------------------------------------------------------
+@router.get("/locations/{location_id}/data-quality")
+def data_quality(location_id: int, session: Session = Depends(get_session),
+                 svc: WeatherService = Depends(service)):
+    """Data quality assessment for a location's stored rainfall history."""
+    _loc(session, location_id)
+    report = validate_location_data(session, location_id,
+                                     max_age_days=svc.settings.max_cache_age_days)
+    return {
+        "location_id": report.location_id,
+        "status": report.status,
+        "issues": report.issues,
+        "total_records": report.total_records,
+        "first_date": report.first_date.isoformat() if report.first_date else None,
+        "last_date": report.last_date.isoformat() if report.last_date else None,
+        "expected_days": report.expected_days,
+        "actual_days": report.actual_days,
+        "missing_days": report.missing_days,
+        "duplicate_count": report.duplicate_count,
+        "null_precip_count": report.null_precip_count,
+        "impossible_values": report.impossible_values,
+        "continuity_ratio": round(report.continuity_ratio, 4) if report.continuity_ratio is not None else None,
+        "providers": report.providers,
+        "kinds": report.kinds,
+    }
+
+
+@router.get("/data-quality/coverage")
+def data_coverage(session: Session = Depends(get_session)):
+    """Overview of data coverage across all district locations."""
+    return coverage_summary(session)
+
+
+# ---- spatial ML status -------------------------------------------------------------
+@router.get("/model/spatial-status")
+def model_spatial_status():
+    """Current spatial awareness status of the ML model.
+
+    Reports whether the model includes location/spatial features, and lists
+    candidate approaches for future spatial modeling experiments.
+    """
+    return spatial_awareness_status()
 
 
 # ---- sources & sync ----------------------------------------------------------------

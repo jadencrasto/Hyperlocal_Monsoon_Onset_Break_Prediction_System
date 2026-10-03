@@ -116,8 +116,7 @@ describe("Dashboard", () => {
     }));
     render(<Dashboard locationId={1} locationName="Pune" />);
     const err = await screen.findByTestId("dash-error");
-    expect(err).toHaveTextContent(/Prediction unavailable/);
-    expect(err).toHaveTextContent(/insufficient_or_gappy_history/);
+    expect(err).toHaveTextContent(/Prediction unavailable.*insufficient rainfall history/i);
   });
 
   it("renders model-unavailable (503) as an unavailable state", async () => {
@@ -126,7 +125,7 @@ describe("Dashboard", () => {
       body: { detail: { error: "model_unavailable", hint: "Run scripts/train_model.py first." } },
     }));
     render(<Dashboard locationId={1} locationName="Pune" />);
-    expect(await screen.findByTestId("dash-error")).toHaveTextContent(/Prediction unavailable/);
+    expect(await screen.findByTestId("dash-error")).toHaveTextContent(/Prediction unavailable.*model is not trained/i);
   });
 
   it("shows the loading state before the fetch resolves", async () => {
@@ -196,9 +195,10 @@ describe("Step 23 cache/offline indicators", () => {
     }));
     render(<Dashboard locationId={2} locationName="Nashik" />);
     const err = await screen.findByTestId("dash-error");
-    expect(err).toHaveTextContent(/Prediction unavailable/);
-    expect(err).toHaveTextContent(/insufficient_or_gappy_history/);
-  });  it("defaults provider and cache_status gracefully when absent (older payload)", async () => {
+    expect(err).toHaveTextContent(/Prediction unavailable.*insufficient rainfall history/i);
+  });
+
+  it("defaults provider and cache_status gracefully when absent (older payload)", async () => {
     const p = pred();
     delete (p.data_status as Record<string, unknown>).provider;
     delete (p.data_status as Record<string, unknown>).cache_status;
@@ -334,8 +334,7 @@ describe("Requirements 26-29 Data freshness & status indicators", () => {
     render(<Dashboard locationId={2} locationName="Nashik" />);
     const err = await screen.findByTestId("dash-error");
 
-    expect(err).toHaveTextContent(/Prediction unavailable/);
-    expect(err).toHaveTextContent(/cached_data_too_old/);
+    expect(err).toHaveTextContent(/Prediction unavailable.*cached data is too old/i);
     expect(screen.getByTestId("status-connectivity")).toHaveTextContent("OFFLINE");
     expect(screen.getByTestId("status-data-type")).toHaveTextContent("Cached data too old");
     expect(screen.getByTestId("status-update-time")).toHaveTextContent("Prediction unavailable");
@@ -394,5 +393,43 @@ describe("HistoryCharts", () => {
     }));
     render(<HistoryCharts locationId={2} />);
     expect(await screen.findByTestId("history-error")).toHaveTextContent(/Historical view unavailable/);
+  });
+});
+
+// ---- Issue 1/9: Out-of-season and error-state mapping ----------------------------
+
+describe("Out-of-season and error-state mapping", () => {
+  it("renders off-season state as informational (not error) when backend returns out_of_season", async () => {
+    mockFetch(() => ({
+      status: 422,
+      body: { detail: { error: "out_of_season", hint: "The model is defined only inside the monsoon season" } },
+    }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    const offSeason = await screen.findByTestId("dash-off-season");
+    expect(offSeason).toBeInTheDocument();
+    expect(offSeason).toHaveTextContent(/off-season/i);
+    expect(offSeason).toHaveTextContent(/Jun 15/);
+    expect(offSeason).toHaveTextContent(/Sep 30/);
+    // NOT an error panel
+    expect(screen.queryByTestId("dash-error")).not.toBeInTheDocument();
+    // Role is status, not alert
+    expect(offSeason).toHaveAttribute("role", "status");
+  });
+
+  it("maps insufficient_data to user-friendly label", async () => {
+    mockFetch(() => ({
+      status: 422,
+      body: { detail: { error: "insufficient_or_gappy_history", hint: "too few rows" } },
+    }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    const err = await screen.findByTestId("dash-error");
+    expect(err).toHaveTextContent(/insufficient rainfall history/i);
+  });
+
+  it("maps server_error to user-friendly label", async () => {
+    mockFetch(() => ({ status: 500, body: { detail: { error: "internal" } } }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    const err = await screen.findByTestId("dash-error");
+    expect(err).toHaveTextContent(/Prediction service returned an error/i);
   });
 });
