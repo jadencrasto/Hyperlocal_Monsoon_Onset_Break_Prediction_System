@@ -212,8 +212,14 @@ export function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** Base URL for all API requests.
+ * - Local dev (VITE_API_BASE_URL unset): empty string → Vite proxy forwards /api/* to http://127.0.0.1:8000.
+ * - Production (Vercel): set VITE_API_BASE_URL=https://your-service.onrender.com in Vercel env vars.
+ */
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await fetch(`${API_BASE_URL}${url}`);
   if (!res.ok) {
     let detail: unknown = null;
     try {
