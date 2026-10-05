@@ -433,3 +433,107 @@ describe("Out-of-season and error-state mapping", () => {
     expect(err).toHaveTextContent(/Prediction service returned an error/i);
   });
 });
+
+// ---- Historical Demo Mode (SIH26086) -----------------------------------------------
+
+describe("Historical Demo Mode", () => {
+  it("renders prediction mode selector with Current Date active by default", async () => {
+    mockFetch(() => ({ body: pred() }));
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    expect(await screen.findByTestId("prediction-mode-selector")).toBeInTheDocument();
+    const currentBtn = screen.getByTestId("mode-current-btn");
+    const demoBtn = screen.getByTestId("mode-demo-btn");
+    expect(currentBtn).toHaveClass("on");
+    expect(demoBtn).not.toHaveClass("on");
+    expect(screen.queryByTestId("demo-date-select")).not.toBeInTheDocument();
+  });
+
+  it("switches to Historical Demo mode, displays demo banner, and passes as_of in API call", async () => {
+    let requestedUrl = "";
+    mockFetch((url) => {
+      requestedUrl = url;
+      if (url.includes("as_of=2026-09-25")) {
+        return {
+          body: pred({
+            prediction_date: "2026-09-25",
+            as_of: "2026-09-25",
+            evaluation_mode: "historical_demo",
+            evaluation_mode_note: "Historical demo evaluation",
+          }),
+        };
+      }
+      return { body: pred() };
+    });
+
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    await screen.findByTestId("dash-summary");
+
+    // Click Historical Demo button
+    const demoBtn = screen.getByTestId("mode-demo-btn");
+    demoBtn.click();
+
+    // Verify as_of passed in request
+    await waitFor(() => {
+      expect(requestedUrl).toContain("as_of=2026-09-25");
+    });
+
+    // Verify demo banner is rendered with reference date
+    const banner = await screen.findByTestId("historical-demo-banner");
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent(/HISTORICAL DEMO/i);
+    expect(banner).toHaveTextContent(/2026-09-25/);
+
+    // Verify date selector is present
+    expect(screen.getByTestId("demo-date-select")).toBeInTheDocument();
+
+    // Verify briefing card indicates historical demo
+    expect(screen.getByTestId("executive-briefing")).toHaveTextContent(/Historical In-Season Demonstration/i);
+  });
+
+  it("switching back to Current Date removes as_of query parameter", async () => {
+    let lastUrl = "";
+    mockFetch((url) => {
+      lastUrl = url;
+      return { body: pred({ prediction_date: "2026-09-25" }) };
+    });
+
+    render(<Dashboard locationId={2} locationName="Nashik" />);
+    await screen.findByTestId("dash-summary");
+
+    // Turn demo on
+    screen.getByTestId("mode-demo-btn").click();
+    await waitFor(() => expect(lastUrl).toContain("as_of=2026-09-25"));
+
+    // Turn demo off
+    screen.getByTestId("mode-current-btn").click();
+    await waitFor(() => expect(lastUrl).not.toContain("as_of="));
+  });
+
+  it("handles out-of-season demo date cleanly with mode selector still visible", async () => {
+    mockFetch((url) => {
+      if (url.includes("as_of=2026-10-05")) {
+        return {
+          status: 422,
+          body: { detail: { error: "out_of_season", hint: "Monsoon season is Jun 15 - Sep 30" } },
+        };
+      }
+      return { body: pred() };
+    });
+
+    render(
+      <Dashboard
+        locationId={2}
+        locationName="Nashik"
+        isDemoMode={true}
+        demoDate="2026-10-05"
+      />
+    );
+
+    // Off-season panel renders
+    const offSeason = await screen.findByTestId("dash-off-season");
+    expect(offSeason).toBeInTheDocument();
+
+    // Mode selector is still available to switch dates or return to current
+    expect(screen.getByTestId("prediction-mode-selector")).toBeInTheDocument();
+  });
+});

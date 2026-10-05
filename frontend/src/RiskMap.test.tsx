@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import RiskMap, { severityColor } from "./RiskMap";
 import { pilotDistricts, type LocationTree, type Prediction } from "./api";
 
@@ -91,5 +91,58 @@ describe("severityColor", () => {
     expect(severityColor.low).not.toEqual(severityColor.moderate);
     expect(severityColor.moderate).not.toEqual(severityColor.high);
     expect(Object.keys(severityColor).sort()).toEqual(["high", "low", "moderate"]);
+  });
+});
+
+vi.mock("react-leaflet", () => ({
+  MapContainer: ({ children }: any) => <div data-testid="mock-map">{children}</div>,
+  TileLayer: () => <div />,
+  CircleMarker: ({ children }: any) => <div data-testid="mock-marker">{children}</div>,
+  Marker: ({ children }: any) => <div data-testid="mock-marker">{children}</div>,
+  Popup: ({ children }: any) => <div>{children}</div>,
+  useMap: () => ({
+    setView: vi.fn(),
+    invalidateSize: vi.fn(),
+    fitBounds: vi.fn(),
+    getContainer: () => document.createElement("div"),
+  }),
+}));
+
+describe("RiskMap Historical Demo Mode", () => {
+  it("passes asOf date to fetchPrediction and displays map demo banner", async () => {
+    const urlsCalled: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        urlsCalled.push(String(url));
+        if (String(url).includes("/locations/tree")) {
+          return { ok: true, status: 200, json: async () => tree } as Response;
+        }
+        if (String(url).includes("/prediction/break-risk")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () =>
+              pred({
+                prediction_date: "2026-09-25",
+                as_of: "2026-09-25",
+                evaluation_mode: "historical_demo",
+              }),
+          } as Response;
+        }
+        return { ok: false, status: 404, json: async () => ({}) } as Response;
+      })
+    );
+
+    render(<RiskMap asOf="2026-09-25" />);
+    const banner = await screen.findByTestId("map-demo-banner");
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent(/HISTORICAL DEMO EVALUATION/i);
+    expect(banner).toHaveTextContent(/2026-09-25/);
+
+    // Verify all district calls included as_of
+    const predUrls = urlsCalled.filter((u) => u.includes("/prediction/break-risk"));
+    expect(predUrls.length).toBeGreaterThan(0);
+    expect(predUrls.every((u) => u.includes("as_of=2026-09-25"))).toBe(true);
   });
 });

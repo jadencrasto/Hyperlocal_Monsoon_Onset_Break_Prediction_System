@@ -128,6 +128,7 @@ function mockFetch(handler: (url: string) => { status?: number; body?: unknown }
 
 beforeEach(() => {
   vi.unstubAllGlobals();
+  window.history.replaceState(null, "", "/");
 });
 
 describe("App shell and navigation", () => {
@@ -198,5 +199,40 @@ describe("App shell and navigation", () => {
     fireEvent.click(screen.getByTestId("tab-technical"));
     expect(screen.getByTestId("tab-technical")).toHaveClass("on");
     expect(await screen.findByTestId("technical-diagnostics")).toBeInTheDocument();
+  });
+
+  it("propagates demo mode to Advisory and RiskMap when enabled", async () => {
+    const urlsCalled: string[] = [];
+    mockFetch((url) => {
+      urlsCalled.push(url);
+      if (url.includes("/health")) return { body: sampleHealth };
+      if (url.includes("/mode")) return { body: { preference: "auto", effective: "online", internet_reachable: true } };
+      if (url.includes("/locations/tree")) return { body: sampleTree };
+      if (url.includes("/prediction/break-risk")) {
+        return {
+          body: {
+            ...samplePred,
+            prediction_date: "2026-09-25",
+            as_of: "2026-09-25",
+            evaluation_mode: "historical_demo",
+          },
+        };
+      }
+      return { body: {} };
+    });
+
+    render(<App />);
+    await screen.findByTestId("tab-dashboard");
+    await screen.findByTestId("location-selector-panel");
+    const demoBtn = await screen.findByTestId("mode-demo-btn");
+    fireEvent.click(demoBtn);
+
+    // Should fetch with as_of
+    expect(urlsCalled.some((u) => u.includes("as_of=2026-09-25"))).toBe(true);
+
+    // Advisory panel receives historical prediction
+    const advPanel = await screen.findByTestId("advisory-panel");
+    expect(advPanel).toBeInTheDocument();
+    expect(screen.getByTestId("advisory-demo-banner")).toBeInTheDocument();
   });
 });

@@ -39,6 +39,9 @@ export interface Prediction {
     longitude: number | null;
   };
   prediction_date: string;
+  as_of?: string;
+  evaluation_mode?: "standard" | "historical_demo";
+  evaluation_mode_note?: string | null;
   probability: number;
   risk_category: "low" | "moderate" | "high";
   risk_bands: Record<string, string> & { note?: string };
@@ -451,8 +454,10 @@ export interface SyncLogItem {
 export const fetchMode = () => getJson<ModeInfo>("/api/mode");
 export const fetchHealth = () => getJson<HealthResponse>("/api/health");
 export const fetchTree = () => getJson<LocationTree>("/api/locations/tree");
-export const fetchPrediction = (locationId: number) =>
-  getJson<Prediction>(`/api/locations/${locationId}/prediction/break-risk`);
+export const fetchPrediction = (locationId: number, asOf?: string) =>
+  getJson<Prediction>(
+    `/api/locations/${locationId}/prediction/break-risk${asOf ? `?as_of=${encodeURIComponent(asOf)}` : ""}`
+  );
 export const fetchHistory = (locationId: number, start: string, end: string) =>
   getJson<HistoryResponse>(
     `/api/locations/${locationId}/history?start=${start}&end=${end}`

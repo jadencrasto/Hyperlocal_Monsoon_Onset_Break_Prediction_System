@@ -256,3 +256,103 @@ def test_calibration_interpretation_signs():
     assert "under-predicts" in mk({"mean_diff": -0.028})["calibration"]["interpretation"]
     assert mk({})["calibration"]["interpretation"] is None
     assert mk({"mean_diff": 0.061})["calibration"]["mean_diff"] == 0.061
+
+
+# ---- Historical Demo Mode & Leakage Validation (SIH26086) --------------------------
+def test_demo_mode_current_date_in_october_without_as_of_out_of_season(make_client, session, location, settings):
+    """Test 1: When latest stored date is in October, calling without as_of rejects as out_of_season."""
+    _install_model(settings)
+    _seed_history(session, location, date(2026, 10, 5), days=60)
+    c = make_client(FakeProvider())
+    r = c.get(f"/api/locations/{location.id}/prediction/break-risk")
+    assert r.status_code == 422
+    assert r.json()["detail"]["error"] == "out_of_season"
+
+
+def test_demo_mode_historical_in_season_date_succeeds(make_client, session, location, settings):
+    """Test 2: Explicit historical in-season as_of date succeeds and returns historical_demo mode."""
+    _install_model(settings)
+    _seed_history(session, location, date(2026, 10, 5), days=60)
+    c = make_client(FakeProvider())
+    r = c.get(f"/api/locations/{location.id}/prediction/break-risk?as_of=2026-09-25")
+    assert r.status_code == 200
+    b = r.json()
+    assert b["as_of"] == "2026-09-25"
+    assert b["prediction_date"] == "2026-09-25"
+    assert b["evaluation_mode"] == "historical_demo"
+    assert "demo/retrospective" in b["evaluation_mode_note"]
+    assert isinstance(b["probability"], float)
+    assert 0.0 <= b["probability"] <= 1.0
+    assert b["risk_category"] in ("low", "moderate", "high")
+
+
+def test_demo_mode_historical_out_of_season_date_rejected(make_client, session, location, settings):
+    """Test 3: Explicit historical date outside monsoon season is rejected."""
+    _install_model(settings)
+    _seed_history(session, location, date(2026, 10, 5), days=60)
+    c = make_client(FakeProvider())
+    r = c.get(f"/api/locations/{location.id}/prediction/break-risk?as_of=2026-10-05")
+    assert r.status_code == 422
+    assert r.json()["detail"]["error"] == "out_of_season"
+
+
+def test_demo_mode_future_date_rejected(make_client, session, location, settings):
+    """Test 4: Explicit future as_of date is rejected."""
+    _install_model(settings)
+    _seed_history(session, location, date(2026, 9, 20), days=60)
+    c = make_client(FakeProvider())
+    future = (date.today() + timedelta(days=10)).isoformat()
+    r = c.get(f"/api/locations/{location.id}/prediction/break-risk?as_of={future}")
+    assert r.status_code == 422
+    assert r.json()["detail"]["error"] == "future_date"
+
+
+def test_demo_mode_invalid_date_rejected(make_client, session, location, settings):
+    """Test 5: Malformed as_of date string is rejected with 422 validation error."""
+    _install_model(settings)
+    _seed_history(session, location, date(2026, 9, 20), days=60)
+    c = make_client(FakeProvider())
+    r = c.get(f"/api/locations/{location.id}/prediction/break-risk?as_of=not-a-date")
+    assert r.status_code == 422
+
+
+def test_demo_mode_data_leakage_protection(make_client, session, location, settings):
+    """Test 6: Observations after as_of date MUST NOT affect the prediction (zero data leakage)."""
+    _install_model(settings)
+    ref_date = date(2026, 9, 20)
+    _seed_history(session, location, ref_date, days=60)
+    c = make_client(FakeProvider())
+
+    # 1. Baseline prediction at ref_date
+    r1 = c.get(f"/api/locations/{location.id}/prediction/break-risk?as_of={ref_date.isoformat()}")
+    assert r1.status_code == 200
+    prob_before = r1.json()["probability"]
+
+    # 2. Add future rainfall after ref_date (massive 100mm deluge on subsequent days)
+    for d in range(1, 5):
+        fut_date = ref_date + timedelta(days=d)
+        session.add(DailyRainfall(
+            location_id=location.id, date=fut_date, precip_mm=100.0,
+            kind="observation", provider="gauge", fetched_at=utcnow()
+        ))
+    session.commit()
+
+    # 3. Repeat prediction at ref_date with future data present in database
+    r2 = c.get(f"/api/locations/{location.id}/prediction/break-risk?as_of={ref_date.isoformat()}")
+    assert r2.status_code == 200
+    prob_after = r2.json()["probability"]
+
+    # Zero leakage: probabilities must be strictly identical
+    assert prob_before == prob_after
+
+
+def test_demo_mode_standard_request_preserves_behavior(make_client, session, location, settings):
+    """Test 7: Standard request without as_of retains stable schema and standard mode."""
+    _install_model(settings)
+    _seed_history(session, location, date(2026, 9, 20), days=60)
+    c = make_client(FakeProvider())
+    r = c.get(f"/api/locations/{location.id}/prediction/break-risk")
+    assert r.status_code == 200
+    b = r.json()
+    assert "evaluation_mode" not in b
+    assert b["prediction_date"] == "2026-09-20"

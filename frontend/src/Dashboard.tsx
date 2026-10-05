@@ -88,13 +88,104 @@ function ErrorPanel({ errorKind, errorLabel, errorHint, errorRaw }: {
   );
 }
 
+function ModeSelectorBar({
+  isDemoMode,
+  onToggleDemoMode,
+  demoDate,
+  onDemoDateChange,
+}: {
+  isDemoMode: boolean;
+  onToggleDemoMode?: (enabled: boolean) => void;
+  demoDate: string;
+  onDemoDateChange?: (date: string) => void;
+}) {
+  return (
+    <div className="card mode-selector-card" data-testid="prediction-mode-selector" style={{ marginBottom: 16, padding: "10px 16px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontWeight: 600, fontSize: "0.88rem" }}>Prediction Mode:</span>
+          <div className="tabs" style={{ margin: 0, display: "inline-flex" }}>
+            <button
+              type="button"
+              className={!isDemoMode ? "on" : ""}
+              onClick={() => onToggleDemoMode?.(false)}
+              data-testid="mode-current-btn"
+              style={{ padding: "4px 12px", fontSize: "0.85rem" }}
+            >
+              Current Date
+            </button>
+            <button
+              type="button"
+              className={isDemoMode ? "on" : ""}
+              onClick={() => onToggleDemoMode?.(true)}
+              data-testid="mode-demo-btn"
+              style={{ padding: "4px 12px", fontSize: "0.85rem" }}
+            >
+              Historical Demo
+            </button>
+          </div>
+        </div>
+        {isDemoMode && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <label htmlFor="demo-date-select" style={{ fontSize: "0.85rem", fontWeight: 500 }}>
+              Demo Reference Date:
+            </label>
+            <select
+              id="demo-date-select"
+              data-testid="demo-date-select"
+              value={demoDate}
+              onChange={(e) => onDemoDateChange?.(e.target.value)}
+              style={{ padding: "4px 8px", borderRadius: 4, fontSize: "0.85rem" }}
+            >
+              <option value="2026-09-25">25 Sep 2026 (In-Season)</option>
+              <option value="2026-09-20">20 Sep 2026 (In-Season)</option>
+              <option value="2026-09-15">15 Sep 2026 (In-Season)</option>
+              <option value="2026-10-05">05 Oct 2026 (Out-of-Season Test)</option>
+            </select>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard({
   locationId,
   locationName,
+  isDemoMode: propIsDemoMode,
+  onToggleDemoMode,
+  demoDate: propDemoDate,
+  onDemoDateChange,
 }: {
   locationId: number;
   locationName: string;
+  isDemoMode?: boolean;
+  onToggleDemoMode?: (enabled: boolean) => void;
+  demoDate?: string;
+  onDemoDateChange?: (date: string) => void;
 }) {
+  const [internalIsDemoMode, setInternalIsDemoMode] = useState<boolean>(false);
+  const [internalDemoDate, setInternalDemoDate] = useState<string>("2026-09-25");
+
+  const isDemoMode = propIsDemoMode !== undefined ? propIsDemoMode : internalIsDemoMode;
+  const demoDate = propDemoDate !== undefined ? propDemoDate : internalDemoDate;
+
+  const handleToggleDemoMode = (enabled: boolean) => {
+    if (onToggleDemoMode) {
+      onToggleDemoMode(enabled);
+    } else {
+      setInternalIsDemoMode(enabled);
+    }
+  };
+
+  const handleDemoDateChange = (date: string) => {
+    if (onDemoDateChange) {
+      onDemoDateChange(date);
+    } else {
+      setInternalDemoDate(date);
+    }
+  };
+
   const [pred, setPred] = useState<Prediction | null>(null);
   const [predError, setPredError] = useState<{
     kind: PredictionErrorKind;
@@ -109,7 +200,8 @@ export default function Dashboard({
     setLoading(true);
     setPredError(null);
     setPred(null);
-    fetchPrediction(locationId)
+    const asOf = isDemoMode ? demoDate : undefined;
+    fetchPrediction(locationId, asOf)
       .then((p) => {
         if (!cancelled) setPred(p);
       })
@@ -122,22 +214,60 @@ export default function Dashboard({
     return () => {
       cancelled = true;
     };
-  }, [locationId]);
+  }, [locationId, isDemoMode, demoDate]);
 
   if (loading) {
     return (
-      <div className="card" data-testid="dash-loading">
-        <span className="loading-line">
-          <span className="spinner" /> Loading prediction for {locationName}…
-        </span>
+      <div data-testid="dashboard" className="dashboard-content-wrap">
+        <ModeSelectorBar
+          isDemoMode={isDemoMode}
+          onToggleDemoMode={handleToggleDemoMode}
+          demoDate={demoDate}
+          onDemoDateChange={handleDemoDateChange}
+        />
+        <div className="card" data-testid="dash-loading">
+          <span className="loading-line">
+            <span className="spinner" /> Loading prediction for {locationName}…
+          </span>
+        </div>
       </div>
     );
   }
   if (predError) {
-    if (predError.kind === "out_of_season") return <OffSeasonPanel />;
-    return <ErrorPanel errorKind={predError.kind} errorLabel={predError.label} errorHint={predError.hint} errorRaw={predError.raw} />;
+    return (
+      <div data-testid="dashboard" className="dashboard-content-wrap">
+        <ModeSelectorBar
+          isDemoMode={isDemoMode}
+          onToggleDemoMode={handleToggleDemoMode}
+          demoDate={demoDate}
+          onDemoDateChange={handleDemoDateChange}
+        />
+        {predError.kind === "out_of_season" ? (
+          <OffSeasonPanel />
+        ) : (
+          <ErrorPanel
+            errorKind={predError.kind}
+            errorLabel={predError.label}
+            errorHint={predError.hint}
+            errorRaw={predError.raw}
+          />
+        )}
+      </div>
+    );
   }
-  if (!pred) return <ErrorPanel errorKind="unknown" errorLabel="Prediction unavailable." errorHint={null} errorRaw="unknown error" />;
+  if (!pred) {
+    return (
+      <div data-testid="dashboard" className="dashboard-content-wrap">
+        <ModeSelectorBar
+          isDemoMode={isDemoMode}
+          onToggleDemoMode={handleToggleDemoMode}
+          demoDate={demoDate}
+          onDemoDateChange={handleDemoDateChange}
+        />
+        <ErrorPanel errorKind="unknown" errorLabel="Prediction unavailable." errorHint={null} errorRaw="unknown error" />
+      </div>
+    );
+  }
 
   const u: Uncertainty = (pred.uncertainty ?? {}) as Uncertainty;
   const ev = u.evaluation_skill ?? {};
@@ -159,16 +289,54 @@ export default function Dashboard({
         ? "On evaluated historical test years, the model performed modestly better than a simple historical-average (climatology) baseline."
         : "On evaluated historical test years, the model did not perform better than a simple historical-average (climatology) baseline.";
 
+  const isDemo = isDemoMode || pred.evaluation_mode === "historical_demo";
+
   return (
     <div data-testid="dashboard" className="dashboard-content-wrap">
+      <ModeSelectorBar
+        isDemoMode={isDemoMode}
+        onToggleDemoMode={handleToggleDemoMode}
+        demoDate={demoDate}
+        onDemoDateChange={handleDemoDateChange}
+      />
+
+      {isDemo && (
+        <div
+          className="card demo-mode-indicator"
+          data-testid="historical-demo-banner"
+          style={{
+            background: "#fef3c7",
+            border: "1px solid #f59e0b",
+            padding: "12px 16px",
+            marginBottom: "16px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span className="badge" style={{ background: "#d97706", color: "#fff", fontWeight: "bold" }}>
+              HISTORICAL DEMO
+            </span>
+            <strong style={{ color: "#92400e" }}>In-Season Evaluation Mode</strong>
+          </div>
+          <p className="muted small" style={{ margin: "4px 0 0", color: "#78350f" }}>
+            Prediction reference date: <strong>{pred.prediction_date}</strong>. Evaluating existing ML model using historical rainfall data up to this reference date.
+          </p>
+        </div>
+      )}
+
       {/* ---- 10-Second Executive Decision Briefing ---- */}
       <section className="card executive-briefing-card" data-testid="executive-briefing">
         <div className="briefing-header">
           <div className="briefing-badge-row">
-            <span className="executive-badge">Executive Monsoon Briefing</span>
+            <span className="executive-badge">
+              {isDemo ? `Historical In-Season Briefing · ${pred.prediction_date}` : "Executive Monsoon Briefing"}
+            </span>
             <span className="scope-tag" data-testid="briefing-scope">Scope: District-HQ Coordinate</span>
           </div>
-          <h3>What is happening in {pred.location.name} right now?</h3>
+          <h3>
+            {isDemo
+              ? `Historical In-Season Demonstration for ${pred.location.name} (as of ${pred.prediction_date})`
+              : `What is happening in ${pred.location.name} right now?`}
+          </h3>
         </div>
 
         <div className="briefing-grid">
@@ -193,10 +361,13 @@ export default function Dashboard({
           <div className="briefing-item">
             <span className="item-label">3. Data Freshness &amp; Source</span>
             <span className="item-value">
-              {ds.freshness.toUpperCase()} ({ds.data_age_days}d old)
+              {isDemo
+                ? `HISTORICAL DEMO (${pred.prediction_date})`
+                : `${ds.freshness.toUpperCase()} (${ds.data_age_days}d old)`}
             </span>
             <span className="item-desc">
-              Provider: {ds.provider ?? "unknown"} ({ds.cache_status === "offline" ? "Offline cache" : "Stored reanalysis"})
+              Provider: {ds.provider ?? "unknown"} (
+              {isDemo ? "Historical reanalysis" : ds.cache_status === "offline" ? "Offline cache" : "Stored reanalysis"})
             </span>
           </div>
 

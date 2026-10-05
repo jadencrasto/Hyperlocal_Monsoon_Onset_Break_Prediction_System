@@ -36,9 +36,15 @@ export default function DataStatusBadge({ pred, error }: DataStatusBadgeProps) {
         <span className={`status-dot ${isOffline ? "offline" : "online"}`}></span>
         {isOffline ? "OFFLINE" : "ONLINE"}
       </span>
-      <span className={`badge-chip ${isLive ? "live" : "cached"}`} data-testid="status-data-type">
-        {isLive ? "Live data" : "Using cached data"}
-      </span>
+      {pred.evaluation_mode === "historical_demo" ? (
+        <span className="badge-chip demo" data-testid="status-demo-mode" style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #f59e0b" }}>
+          Historical Demo ({pred.prediction_date})
+        </span>
+      ) : (
+        <span className={`badge-chip ${isLive ? "live" : "cached"}`} data-testid="status-data-type">
+          {isLive ? "Live data" : "Using cached data"}
+        </span>
+      )}
       <span className="status-text" data-testid="status-update-time">
         {updateText}
       </span>

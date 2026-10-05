@@ -94,6 +94,9 @@ export default function App() {
     [districts, selectedId]
   );
 
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
+  const [demoDate, setDemoDate] = useState<string>("2026-09-25");
+
   // Keep URL in sync
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
@@ -102,12 +105,13 @@ export default function App() {
     window.history.replaceState(null, "", `${window.location.pathname}?${p.toString()}`);
   }, [tab, selectedId]);
 
-  // Fetch prediction whenever selected location changes
+  // Fetch prediction whenever selected location or demo mode changes
   useEffect(() => {
     if (selectedId == null) return;
     let cancelled = false;
     setPred(null);
-    fetchPrediction(selectedId)
+    const asOf = isDemoMode ? demoDate : undefined;
+    fetchPrediction(selectedId, asOf)
       .then((p) => {
         if (!cancelled) setPred(p);
       })
@@ -117,7 +121,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedId]);
+  }, [selectedId, isDemoMode, demoDate]);
 
   return (
     <div className="app">
@@ -240,12 +244,20 @@ export default function App() {
                   setSelectedId(id);
                   setTab("dashboard");
                 }}
+                asOf={isDemoMode ? demoDate : undefined}
               />
             )}
 
             {tab === "dashboard" && selected && (
               <>
-                <Dashboard locationId={selected.id} locationName={selected.name} />
+                <Dashboard
+                  locationId={selected.id}
+                  locationName={selected.name}
+                  isDemoMode={isDemoMode}
+                  onToggleDemoMode={setIsDemoMode}
+                  demoDate={demoDate}
+                  onDemoDateChange={setDemoDate}
+                />
                 {pred && <AdvisoryPanel pred={pred} />}
                 <HistoryCharts locationId={selected.id} />
               </>
@@ -266,7 +278,16 @@ export default function App() {
               selected && pred ? (
                 <AdvisoryPanel pred={pred} />
               ) : (
-                selected && <Dashboard locationId={selected.id} locationName={selected.name} />
+                selected && (
+                  <Dashboard
+                    locationId={selected.id}
+                    locationName={selected.name}
+                    isDemoMode={isDemoMode}
+                    onToggleDemoMode={setIsDemoMode}
+                    demoDate={demoDate}
+                    onDemoDateChange={setDemoDate}
+                  />
+                )
               )
             )}
 

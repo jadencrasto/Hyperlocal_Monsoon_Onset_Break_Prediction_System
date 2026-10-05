@@ -129,6 +129,12 @@ function DetailCard({ pred, error, errorKind }: { pred: Prediction | null; error
               ? `Modest improvement over the climatology baseline (BSS ${bss.toFixed(3)})`
               : "No improvement over the climatology baseline"}
         </dd>
+        {pred.evaluation_mode === "historical_demo" && (
+          <>
+            <dt>Evaluation mode</dt>
+            <dd data-testid="map-detail-demo-mode">Historical demo (as of {pred.prediction_date})</dd>
+          </>
+        )}
       </dl>
       <p className="muted small">{pred.basis}</p>
       <p className="muted small">{pred.risk_bands.note ?? ""}</p>
@@ -139,10 +145,12 @@ function DetailCard({ pred, error, errorKind }: { pred: Prediction | null; error
 export default function RiskMap({
   selectedId = null,
   onSelect,
+  asOf,
 }: {
   /** Shared selection from the app shell (Step 17); null keeps Step 16 internal state. */
   selectedId?: number | null;
   onSelect?: (locationId: number) => void;
+  asOf?: string;
 }) {
   const [markers, setMarkers] = useState<MapMarker[] | null>(null);
   const [treeError, setTreeError] = useState<string | null>(null);
@@ -163,6 +171,7 @@ export default function RiskMap({
 
   useEffect(() => {
     let cancelled = false;
+    setPredictionsDone(false);
     (async () => {
       try {
         const tree = await fetchTree();
@@ -181,7 +190,7 @@ export default function RiskMap({
             let error: string | null = null;
             let errorKind: PredictionErrorKind | null = null;
             try {
-              pred = await fetchPrediction(loc.id);
+              pred = await fetchPrediction(loc.id, asOf);
             } catch (e) {
               const parsed = extractPredictionError(e);
               error = parsed.label;
@@ -201,7 +210,7 @@ export default function RiskMap({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [asOf]);
 
   const points = useMemo(
     () =>
@@ -255,6 +264,26 @@ export default function RiskMap({
             </p>
             <p className="muted small">
               Pilot locations remain available for rainfall, historical analysis, forecast and other supported views.
+            </p>
+          </div>
+        )}
+
+        {asOf && (
+          <div
+            className="demo-mode-badge"
+            data-testid="map-demo-banner"
+            style={{
+              margin: "8px 0",
+              padding: "8px 12px",
+              background: "#fef3c7",
+              border: "1px solid #f59e0b",
+              borderRadius: "6px",
+              color: "#92400e",
+            }}
+          >
+            <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>HISTORICAL DEMO EVALUATION</span>
+            <p className="muted small" style={{ margin: "2px 0 0", color: "#78350f" }}>
+              Prediction reference date: <strong>{asOf}</strong> (In-Season Demonstration)
             </p>
           </div>
         )}
@@ -325,6 +354,9 @@ export default function RiskMap({
             >
               <Popup>
                 <strong>{m.loc.name}</strong>
+                {m.pred.evaluation_mode === "historical_demo" && (
+                  <span style={{ color: "#ca8a04", fontWeight: 600 }}> (Historical Demo)</span>
+                )}
                 <br />
                 {(m.pred.probability * 100).toFixed(1)}% · {m.pred.risk_category} break-risk
                 <br />

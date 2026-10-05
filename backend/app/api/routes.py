@@ -363,6 +363,9 @@ def prediction_break_risk(location_id: int, request: Request, as_of: date | None
         raise HTTPException(503, detail={"error": "model_unavailable",
                             "hint": "Run scripts/train_model.py first."})
 
+    requested_as_of = as_of
+    is_historical_demo = requested_as_of is not None
+
     mode = svc.effective_mode(request.app.state.mode_pref)
     is_live = False
 
@@ -390,8 +393,8 @@ def prediction_break_risk(location_id: int, request: Request, as_of: date | None
                                     "extrapolation beyond the training domain."})
 
     data_age_days = (date.today() - as_of).days
-    # Requirement 27: If cached data is too old for prediction, reject cleanly
-    if not is_live and (as_of == latest) and (data_age_days > svc.settings.max_cache_age_days):
+    # Requirement 27: If cached data is too old for prediction, reject cleanly (applies to current/live predictions)
+    if not is_historical_demo and not is_live and (as_of == latest) and (data_age_days > svc.settings.max_cache_age_days):
         raise HTTPException(422, detail={"error": "cached_data_too_old",
                             "hint": f"Cached rainfall data is too old ({data_age_days} days old, max allowed {svc.settings.max_cache_age_days} days). Prediction unavailable."})
 
@@ -417,7 +420,7 @@ def prediction_break_risk(location_id: int, request: Request, as_of: date | None
 
     cache_status = "live" if is_live else ("offline" if mode == "offline" else "cached")
 
-    return {
+    res = {
         "type": "break_risk_prediction",
         "schema_version": SCHEMA_VERSION,
         "location": _loc_out(location),
@@ -472,6 +475,13 @@ def prediction_break_risk(location_id: int, request: Request, as_of: date | None
             "not an actionable forecast.",
         ],
     }
+    if is_historical_demo:
+        res["as_of"] = as_of.isoformat()
+        res["evaluation_mode"] = "historical_demo"
+        res["evaluation_mode_note"] = (
+            "Evaluated against historical in-season reference date for demo/retrospective analysis."
+        )
+    return res
 
 
 @router.get("/model/evaluation")

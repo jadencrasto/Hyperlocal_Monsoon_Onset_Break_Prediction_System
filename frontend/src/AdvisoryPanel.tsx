@@ -85,6 +85,26 @@ export default function AdvisoryPanel({ pred }: { pred: Prediction }) {
         </div>
       </div>
 
+      {pred.evaluation_mode === "historical_demo" && (
+        <div
+          className="demo-mode-badge"
+          data-testid="advisory-demo-banner"
+          style={{
+            margin: "8px 0 12px",
+            padding: "8px 12px",
+            background: "#fef3c7",
+            border: "1px solid #f59e0b",
+            borderRadius: "6px",
+            color: "#92400e",
+            fontSize: "0.85rem",
+          }}
+        >
+          <strong>Historical Demo Advisory</strong> — Reference date:{" "}
+          <strong>{pred.prediction_date}</strong>. Break-risk indication:{" "}
+          <strong>{pred.risk_category}</strong> ({(pred.probability * 100).toFixed(1)}%).
+        </div>
+      )}
+
       <p className="advisory-status">
         <span className="badge" style={{ background: style }} data-testid="advisory-status">
           {localizedStatus(locale, core.status)}
