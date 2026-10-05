@@ -15,7 +15,10 @@ models/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/app/.gitkeep
+!data/app/monsoon.db
 !models/.gitkeep
+!models/break_risk.joblib
+!models/evaluation.json
 # node
 frontend/node_modules/
 frontend/dist/

@@ -1,0 +1,486 @@
+{
+  "created_at_utc": "2026-09-29T14:48:38+00:00",
+  "target": {
+    "horizon_days": 7,
+    "dry_len": 5,
+    "dry_mm": 2.5,
+    "first_md": [
+      6,
+      15
+    ],
+    "season_end_md": [
+      9,
+      30
+    ],
+    "definition": "at least dry_len consecutive days with rain < dry_mm inside days t+1..t+horizon_days"
+  },
+  "intended_use": "historical-pattern-based local dry-spell risk estimate from past rainfall only; NOT a forecast-driven prediction and NOT operationally validated",
+  "data_provenance": {
+    "kind": "stored_history",
+    "location_selection": {
+      "mode": "all_locations",
+      "selected_location_ids": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "available_location_ids_with_history": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    "locations": [
+      {
+        "location_id": 1,
+        "name": "Pune",
+        "rows": 2626,
+        "years": 26,
+        "kinds": [
+          "reanalysis"
+        ]
+      },
+      {
+        "location_id": 2,
+        "name": "Nashik",
+        "rows": 2626,
+        "years": 26,
+        "kinds": [
+          "reanalysis"
+        ]
+      },
+      {
+        "location_id": 3,
+        "name": "Kolhapur",
+        "rows": 2626,
+        "years": 26,
+        "kinds": [
+          "reanalysis"
+        ]
+      },
+      {
+        "location_id": 4,
+        "name": "Chhatrapati Sambhajinagar",
+        "rows": 2626,
+        "years": 26,
+        "kinds": [
+          "reanalysis"
+        ]
+      },
+      {
+        "location_id": 5,
+        "name": "Nagpur",
+        "rows": 2626,
+        "years": 26,
+        "kinds": [
+          "reanalysis"
+        ]
+      }
+    ],
+    "rows": 13130
+  },
+  "split_years": {
+    "train": [
+      2000,
+      2001,
+      2002,
+      2003,
+      2004,
+      2005,
+      2006,
+      2007,
+      2008,
+      2009,
+      2010,
+      2011,
+      2012
+    ],
+    "validation": [
+      2013,
+      2014,
+      2015,
+      2016,
+      2017
+    ],
+    "test": [
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025
+    ]
+  },
+  "dataset": {
+    "n_rows": 13130,
+    "first_date": "2000-06-15",
+    "last_date": "2025-09-23",
+    "n_years": 26,
+    "n_locations": 5,
+    "location_ids": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ]
+  },
+  "splits": {
+    "train": {
+      "n_rows": 6565,
+      "n_years": 13,
+      "year_min": 2000,
+      "year_max": 2012,
+      "n_locations": 5,
+      "location_ids": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    "validation": {
+      "n_rows": 2525,
+      "n_years": 5,
+      "year_min": 2013,
+      "year_max": 2017,
+      "n_locations": 5,
+      "location_ids": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    "test": {
+      "n_rows": 4040,
+      "n_years": 8,
+      "year_min": 2018,
+      "year_max": 2025,
+      "n_locations": 5,
+      "location_ids": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    }
+  },
+  "model_class": "Pipeline",
+  "validation_brier_by_model": {
+    "logistic_regression": 0.17254721906893017,
+    "random_forest": 0.17599471616512347
+  },
+  "selected_model": "logistic_regression",
+  "test": {
+    "model": {
+      "n": 4040,
+      "base_rate": 0.1349009900990099,
+      "brier": 0.1183780382478982,
+      "log_loss": 0.38920239471512036,
+      "roc_auc": 0.6787247837671117
+    },
+    "baseline_climatology": {
+      "n": 4040,
+      "base_rate": 0.1349009900990099,
+      "brier": 0.12688875485528348,
+      "log_loss": 0.4210633735278377,
+      "roc_auc": 0.5537963801498864
+    },
+    "baseline_dry_run_conditioned": {
+      "n": 4040,
+      "base_rate": 0.1349009900990099,
+      "brier": 0.11445036570789927,
+      "log_loss": 0.38095784576003006,
+      "roc_auc": 0.6748999225630323
+    },
+    "brier_skill_vs_climatology": 0.06707226828013035,
+    "brier_skill_ci": {
+      "low": 0.040950099989010134,
+      "high": 0.09648771922203667,
+      "n_years": 8,
+      "method": "year-block bootstrap, 95%",
+      "resampling_unit": "year",
+      "n_resamples": 500,
+      "seed": 0,
+      "confidence_level": 0.95,
+      "interval_method": "percentile"
+    },
+    "per_year": [
+      {
+        "year": 2018,
+        "n": 505,
+        "positives": 123,
+        "negatives": 382,
+        "observed_rate": 0.24356435643564356,
+        "brier": 0.16656748231033477,
+        "log_loss": 0.4982698473096562,
+        "roc_auc": 0.7227046354233175,
+        "brier_skill_vs_climatology": 0.06309292004583766
+      },
+      {
+        "year": 2019,
+        "n": 505,
+        "positives": 68,
+        "negatives": 437,
+        "observed_rate": 0.13465346534653466,
+        "brier": 0.12008129475641763,
+        "log_loss": 0.38790361863566303,
+        "roc_auc": 0.6823260196527122,
+        "brier_skill_vs_climatology": 0.1352934876167292
+      },
+      {
+        "year": 2020,
+        "n": 505,
+        "positives": 25,
+        "negatives": 480,
+        "observed_rate": 0.04950495049504951,
+        "brier": 0.0707390700114173,
+        "log_loss": 0.29132987375362246,
+        "roc_auc": 0.45300000000000007,
+        "brier_skill_vs_climatology": 0.08586587707629512
+      },
+      {
+        "year": 2021,
+        "n": 505,
+        "positives": 99,
+        "negatives": 406,
+        "observed_rate": 0.19603960396039605,
+        "brier": 0.1714456520501237,
+        "log_loss": 0.5244879183679866,
+        "roc_auc": 0.48955067920585166,
+        "brier_skill_vs_climatology": 0.01326186434935217
+      },
+      {
+        "year": 2022,
+        "n": 505,
+        "positives": 48,
+        "negatives": 457,
+        "observed_rate": 0.09504950495049505,
+        "brier": 0.08463377167824947,
+        "log_loss": 0.304400341312327,
+        "roc_auc": 0.7305798687089716,
+        "brier_skill_vs_climatology": 0.06578998203700503
+      },
+      {
+        "year": 2023,
+        "n": 505,
+        "positives": 102,
+        "negatives": 403,
+        "observed_rate": 0.201980198019802,
+        "brier": 0.16202587666176094,
+        "log_loss": 0.4903837235479936,
+        "roc_auc": 0.6249939181627986,
+        "brier_skill_vs_climatology": 0.05344104636488689
+      },
+      {
+        "year": 2024,
+        "n": 505,
+        "positives": 40,
+        "negatives": 465,
+        "observed_rate": 0.07920792079207921,
+        "brier": 0.07860597470740126,
+        "log_loss": 0.2773545318626503,
+        "roc_auc": 0.8584408602150537,
+        "brier_skill_vs_climatology": 0.037912863032589894
+      },
+      {
+        "year": 2025,
+        "n": 505,
+        "positives": 40,
+        "negatives": 465,
+        "observed_rate": 0.07920792079207921,
+        "brier": 0.09292518380748063,
+        "log_loss": 0.33948930293106355,
+        "roc_auc": 0.4551612903225807,
+        "brier_skill_vs_climatology": 0.10521094489075544
+      }
+    ],
+    "calibration": {
+      "mean_predicted": 0.1955847866375098,
+      "observed_rate": 0.1349009900990099,
+      "mean_diff": 0.060683796538499896,
+      "binning": {
+        "n_bins": 10,
+        "bin_width": 0.1,
+        "interval_convention": "[low, high)",
+        "last_bin_includes_upper": true
+      },
+      "reliability": [
+        {
+          "low": 0.0,
+          "high": 0.1,
+          "n": 936,
+          "mean_predicted": 0.06170501354911862,
+          "observed_rate": 0.03205128205128205,
+          "diff": 0.029653731497836573
+        },
+        {
+          "low": 0.1,
+          "high": 0.2,
+          "n": 1434,
+          "mean_predicted": 0.14697807693239345,
+          "observed_rate": 0.12343096234309624,
+          "diff": 0.023547114589297216
+        },
+        {
+          "low": 0.2,
+          "high": 0.3,
+          "n": 924,
+          "mean_predicted": 0.24563931214682638,
+          "observed_rate": 0.16774891774891776,
+          "diff": 0.07789039439790862
+        },
+        {
+          "low": 0.3,
+          "high": 0.4,
+          "n": 457,
+          "mean_predicted": 0.3423394552523518,
+          "observed_rate": 0.24070021881838075,
+          "diff": 0.10163923643397108
+        },
+        {
+          "low": 0.4,
+          "high": 0.5,
+          "n": 191,
+          "mean_predicted": 0.4444748523834207,
+          "observed_rate": 0.27225130890052357,
+          "diff": 0.17222354348289715
+        },
+        {
+          "low": 0.5,
+          "high": 0.6,
+          "n": 93,
+          "mean_predicted": 0.5405180189192625,
+          "observed_rate": 0.21505376344086022,
+          "diff": 0.3254642554784023
+        },
+        {
+          "low": 0.6,
+          "high": 0.7,
+          "n": 5,
+          "mean_predicted": 0.6114709947590581,
+          "observed_rate": 0.2,
+          "diff": 0.4114709947590581
+        },
+        {
+          "low": 0.7,
+          "high": 0.8,
+          "n": 0,
+          "mean_predicted": null,
+          "observed_rate": null,
+          "diff": null
+        },
+        {
+          "low": 0.8,
+          "high": 0.9,
+          "n": 0,
+          "mean_predicted": null,
+          "observed_rate": null,
+          "diff": null
+        },
+        {
+          "low": 0.9,
+          "high": 1.0,
+          "n": 0,
+          "mean_predicted": null,
+          "observed_rate": null,
+          "diff": null
+        }
+      ],
+      "note": "diagnostic only; few years and clustered days make this unreliable evidence"
+    },
+    "by_location": [
+      {
+        "location_id": 1,
+        "n": 808,
+        "positives": 145,
+        "negatives": 663,
+        "observed_rate": 0.17945544554455445,
+        "brier": 0.1415697389502414,
+        "log_loss": 0.4438389127105309,
+        "roc_auc": 0.689499141831799,
+        "brier_vs_climatology": -0.012623964281191502,
+        "brier_vs_dry_run_baseline": 0.004980240360535404,
+        "brier_skill_vs_climatology": 0.08187081584157752
+      },
+      {
+        "location_id": 2,
+        "n": 808,
+        "positives": 88,
+        "negatives": 720,
+        "observed_rate": 0.10891089108910891,
+        "brier": 0.1060906393536552,
+        "log_loss": 0.3664694797140686,
+        "roc_auc": 0.6309027777777778,
+        "brier_vs_climatology": -0.004141831731658344,
+        "brier_vs_dry_run_baseline": 0.004341763705228707,
+        "brier_skill_vs_climatology": 0.03757360867337178
+      },
+      {
+        "location_id": 3,
+        "n": 808,
+        "positives": 87,
+        "negatives": 721,
+        "observed_rate": 0.10767326732673267,
+        "brier": 0.10263430102850496,
+        "log_loss": 0.3487038482701644,
+        "roc_auc": 0.7120378784255584,
+        "brier_vs_climatology": -0.005905160308150234,
+        "brier_vs_dry_run_baseline": 0.004190089827802293,
+        "brier_skill_vs_climatology": 0.054405653348824745
+      },
+      {
+        "location_id": 4,
+        "n": 808,
+        "positives": 144,
+        "negatives": 664,
+        "observed_rate": 0.1782178217821782,
+        "brier": 0.14258578713574532,
+        "log_loss": 0.44797661898000535,
+        "roc_auc": 0.665129267068273,
+        "brier_vs_climatology": -0.008039860175051261,
+        "brier_vs_dry_run_baseline": 0.002949432732068352,
+        "brier_skill_vs_climatology": 0.05337643567739858
+      },
+      {
+        "location_id": 5,
+        "n": 808,
+        "positives": 81,
+        "negatives": 727,
+        "observed_rate": 0.10024752475247525,
+        "brier": 0.09900972477134413,
+        "log_loss": 0.33902311390083245,
+        "roc_auc": 0.6787915838809925,
+        "brier_vs_climatology": -0.011842766540875002,
+        "brier_vs_dry_run_baseline": 0.003176836074359979,
+        "brier_skill_vs_climatology": 0.10683356233753483
+      }
+    ]
+  },
+  "features": [
+    "r1",
+    "sum3",
+    "sum7",
+    "sum14",
+    "sum30",
+    "rainy_frac14",
+    "dry_run",
+    "doy_sin",
+    "doy_cos"
+  ],
+  "caveats": [
+    "Test-year rows within a year are autocorrelated; effective sample size is smaller than n.",
+    "Skill on reanalysis rainfall does not imply skill against gauge observations.",
+    "Per-year and calibration blocks are small-sample diagnostics, not evidence of stable skill or of a calibrated model."
+  ]
+}
